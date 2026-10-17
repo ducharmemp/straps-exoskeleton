@@ -1,6 +1,8 @@
-# straps-collab
+# straps-exoskeleton
 
-straps-collab gives straps.nvim users and agents a shared org document for questions, code changes, constraints, and evidence. Both participants can edit the specification and the code; the template imposes no schema.
+straps-exoskeleton gives straps.nvim users and agents a shared org document for questions, code changes, constraints, and evidence. Both participants can edit the specification and the code; the template imposes no schema.
+
+The project name is straps-exoskeleton. Existing identifiers remain `straps-collab` for Nix packages and modules, `straps_collab` for Lua, and `:StrapsCollab` for the command.
 
 ## Setup
 
@@ -67,4 +69,23 @@ exit "$fail"
 
 `nix build --no-link path:.` builds the Vim plugin package. The flake exports `packages.<system>.default`, `packages.<system>.straps-collab`, and `overlays.default` with `vimPlugins.straps-collab`.
 
-Add the package alongside straps.nvim to your Neovim plugin list. The package does not bundle straps.nvim or orgmode.nvim; install and configure those dependencies in your Neovim configuration, using the setup above.
+For Nixvim, import both plugins' modules and enable them:
+
+```nix
+{
+  imports = [
+    inputs.straps.nixvimModules.default
+    inputs.straps-exoskeleton.nixvimModules.default
+  ];
+  plugins.straps.enable = true;
+  plugins."straps-collab".enable = true;
+}
+```
+
+Use your own flake input names in place of `straps` and `straps-exoskeleton`. This flake exports `nixvimModules.default` and `nixvimModules."straps-collab"` as aliases. The module installs the plugin and appends its registration after straps' normal setup snippet with `lib.mkAfter`. Override `plugins."straps-collab".package` to use another build. There is no settings option because `register()` takes no configuration.
+
+The module does not enable or configure straps.nvim or orgmode.nvim. Enable straps as shown above; orgmode.nvim remains optional. With this module, omit the manual `require('straps_collab').register()` from the setup instructions.
+
+Without Nixvim, add the package alongside straps.nvim to your Neovim plugin list and use the manual setup above.
+
+The `nixvim-module` flake check evaluates disabled, enabled, custom-package, alias, and setup-order behavior using `lib.evalModules` with a minimal option schema. It is a module contract test, not an evaluation of a complete Nixvim configuration.

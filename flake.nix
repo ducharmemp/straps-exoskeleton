@@ -28,6 +28,31 @@
         vimPlugins = prev.vimPlugins // { straps-collab = mkPlugin final; };
       };
 
+      nixvimModules = let
+        collab = { lib, config, pkgs, ... }:
+          let cfg = config.plugins."straps-collab";
+          in {
+            options.plugins."straps-collab" = {
+              enable = lib.mkEnableOption "straps-collab shared org notebooks";
+              package = lib.mkOption {
+                type = lib.types.package;
+                default = mkPlugin pkgs;
+                defaultText = lib.literalExpression ''inputs.straps-collab.packages.''${system}.default'';
+                description = "The straps-collab plugin package.";
+              };
+            };
+            config = lib.mkIf cfg.enable {
+              extraPlugins = [ cfg.package ];
+              extraConfigLua = lib.mkAfter ''
+                require('straps_collab').register()
+              '';
+            };
+          };
+      in {
+        "straps-collab" = collab;
+        default = collab;
+      };
+
       devShells = forAllSystems (pkgs: {
         default = pkgs.mkShell {
           packages = [
@@ -38,6 +63,11 @@
       });
 
       checks = forAllSystems (pkgs: {
+        nixvim-module = (import ./tests/nixvim-module.nix {
+          inherit pkgs;
+          modules = self.nixvimModules;
+          package = mkPlugin pkgs;
+        }).check;
         tests = pkgs.stdenvNoCC.mkDerivation {
           name = "straps-collab-tests";
           src = self;

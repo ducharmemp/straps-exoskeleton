@@ -1,4 +1,4 @@
-*straps-collab.txt*  Shared org notebooks for straps.nvim
+*straps-collab.txt*  straps-exoskeleton: shared org notebooks for straps.nvim
 
 SETUP                                                        *straps-collab*
 
@@ -7,8 +7,11 @@ call require('straps_collab').register() before creating agent sessions.
 Registration adds fn.system_prompt_layer.collab; existing transcripts retain
 their stored system prompt. Both humans and agents may edit code and specs.
 
+The project name is straps-exoskeleton. Lua names, commands, Nix identifiers,
+and help tags retain their existing names.
+
 orgmode.nvim is optional. Buffers receive filetype org on load. Configure
-orgmode.nvim yourself; straps-collab does not configure agendas or execute
+orgmode.nvim yourself; straps-exoskeleton does not configure agendas or execute
 source blocks. The org template has no required headings or schema.
 
 COMMANDS                                            *straps-collab-commands*
