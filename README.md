@@ -25,7 +25,7 @@ From a straps session buffer, run:
 :StrapsCollab my-proposal
 ```
 
-The command creates a new file and opens it in a split, preserving the transcript window. A replacement `tool.collab_start` must retain a `bufnr: N` response line naming the notebook buffer; the command uses that field to open the split. Outside a straps session, it refuses before creating a file. Agents can call `collab_start` with a name or omit the name for a timestamped filename.
+The command creates a new file and opens it in a split, preserving the transcript window. The command calls the Lua start function with the session context directly, so it does not pass through the tool guard chain. Outside a straps session, it refuses before creating a file. Agents can call `collab_start` with a name or omit the name for a timestamped filename.
 
 Files live in `stdpath('data')/straps/collab`, independent of the current repository. Every start creates a new file: repeated names and timestamp collisions receive numeric suffixes. `collab_open` reopens an existing named file without subscribing; follow it with `collab_subscribe` to receive save notices. A session can subscribe to several notebooks, and several sessions can subscribe to one notebook.
 
@@ -43,8 +43,9 @@ Subscriptions last for this Neovim process. Cross-process notifications and noti
 
 ## Tools
 
-- `collab_start {name?, dir?}` creates a unique file and subscribes the calling session.
-- `collab_open {name?, dir?}` creates or reopens a named file without a subscription.
+- `collab_start {name?, dir?}` creates a unique file, subscribes the calling session, opens the notebook in a split without moving focus, and returns the live buffer content with line numbers.
+- `collab_open {name?, dir?}` creates or reopens a named file without a subscription, opens it in a split when no window shows it, and returns the live buffer content.
+- `collab_read {path}` returns the notebook's live buffer content with line numbers, including unsaved edits.
 - `collab_subscribe {path}` subscribes the calling session to an existing regular file under the collaboration root.
 - `collab_unsubscribe {path}` removes that session's subscription without loading a file.
 - `collab_list {}` lists up to 500 regular org files in the root directory, sorted by name, and subscriptions for loaded buffers. It does not create directories or load files; nested directories are not enumerated.

@@ -21,16 +21,21 @@ COMMANDS                                            *straps-collab-commands*
     subscribe that session, and open the notebook in a split. Other buffers
     are refused before file creation. A missing name uses a timestamp.
     Repeated names receive numeric suffixes; every start creates a new file.
-    A custom tool.collab_start must preserve the response line bufnr: N,
-    naming the notebook buffer, because the command uses it to open the split.
+    The command calls the Lua start function directly with the session
+    context, so it does not pass through the tool guard chain.
 
 TOOLS                                                  *straps-collab-tools*
 
 collab_start {name?, dir?}
-    Create a unique file and subscribe the calling session.
+    Create a unique file and subscribe the calling session. Open the notebook
+    in a split without moving focus, and return path, created, bufnr, and the
+    live buffer content with line numbers.
 collab_open {name?, dir?}
     Create or reopen a named file without subscribing. Existing content and
-    unsaved buffer edits are retained. Returns path, created, and bufnr text.
+    unsaved buffer edits are retained. Open it in a split when no window shows
+    it. Returns path, created, bufnr, and the live buffer content.
+collab_read {path}
+    Return the live buffer content with line numbers, including unsaved edits.
 collab_subscribe {path}
     Subscribe the calling session to saves of an existing regular file.
     Repeated subscriptions return the existing group id.
