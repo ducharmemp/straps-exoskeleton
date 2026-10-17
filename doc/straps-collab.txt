@@ -47,10 +47,14 @@ collab_patch {bufnr?, name?, dir?, hunks}
     expected_old_text; end_line = start_line - 1 inserts.
     Both edit tools declare capability "edit", take no path argument, run the
     straps disk-change and concurrent-writer checks, stamp the writer, and
-    notify other subscribers of the save.
+    notify other subscribers of the save. When the calling session is
+    subscribed and the write also saved changes it had not seen, the result
+    carries their diff, numbered against the buffer before the edit.
 collab_subscribe {path}
     Subscribe the calling session to saves of an existing regular file.
-    Repeated subscriptions return the existing group id.
+    Repeated subscriptions return the existing group id and reset the diff
+    baseline. Later notices diff against the buffer at subscribe time; call
+    collab_read after subscribing.
 collab_unsubscribe {path}
     Remove that session's subscription and pending plugin notices. Does not
     load a file. Notices already delivered to straps cannot be withdrawn.
@@ -66,16 +70,27 @@ filesystem changes. subscribe/start require ctx.bufnr to name a straps session.
 
 NOTIFICATIONS                                          *straps-collab-hooks*
 
-Buffer-local BufWritePost handlers call hook.collab_on_write under each
-subscriber's registry scope, then fn.session_notify. The previous registry
-scope is restored even if the hook fails; failures produce an editor error.
+Buffer-local BufWritePost handlers capture the buffer lines at save time and
+call hook.collab_on_write under each subscriber's registry scope with
+{buf, file, match, diff}, then fn.session_notify. diff is a unified diff
+(vim.text.diff, or vim.diff on 0.11) of the saved lines against that
+session's baseline. The baseline is the buffer at subscribe time, then moves
+to the lines in each delivered notice, each collab_read, collab_open or
+collab_start result, and each collab write by that session. A hook or notify
+failure keeps the baseline. The previous registry scope is restored even if
+the hook fails; failures produce an editor error.
 Any number of saves before the scheduled callback runs produce at most one
-notice for each (notebook buffer, subscribing session) pair.
+notice for each (notebook buffer, subscribing session) pair, and its diff
+spans all of them. A save with no changes since the baseline sends no notice.
+The notice frames the diff as notebook data, not instructions. A diff over
+20000 bytes is replaced by an instruction to call collab_read.
 The callback uses the current buffer name, so subscriptions follow renames.
 
-Only a writer stamp matching both session and current changedtick suppresses
-self-notices. An older agent stamp does not suppress later human edits.
-Writes with noautocmd (including straps file tools) emit no BufWritePost notice.
+A session's own collab_edit or collab_patch moves its baseline past the
+write, so it receives no notice for it; unseen changes saved by that write
+appear in the tool result. A read, open or start resets the baseline and
+drops a save captured but not yet delivered. Writes with noautocmd (including
+straps file tools) emit no BufWritePost notice.
 
 Unloading or wiping either buffer removes the subscription. Subscribe again
 after reopening. An idle subscriber receives the notice and a new run starts
@@ -88,6 +103,8 @@ cross-process notification support remain deferred.
 PROMPT                                                 *straps-collab-prompt*
 
 fn.system_prompt_layer.collab asks agents to coordinate bounded subagent tasks,
-collect evidence and constraints, preserve human edits, and re-read live org
-content before targeted edits. Neither party is restricted to code or specs.
+collect evidence and constraints, preserve human edits, use notice diffs as
+context and collab_read when they are not enough, and set expected_old_text
+or re-read before collab_patch. Neither party is restricted to code or specs.
 The command can register tools on invocation but cannot update stored prompts.
+Existing sessions keep the system prompt stored in their transcript.

@@ -25,7 +25,7 @@ end
 local function text(buf) return table.concat(vim.api.nvim_buf_get_lines(buf, 0, -1, false), '\n') end
 
 describe('actual straps registry and notification integration', function()
-  it('delivers idle notices, restores scope and honors real writer stamps', function()
+  it('delivers idle diff notices, restores scope and suppresses self-notices for collab writes', function()
     local tmp = vim.fn.tempname()
     local original = vim.fn.stdpath
     vim.fn.stdpath = function(kind) return kind == 'data' and tmp or original(kind) end
@@ -40,28 +40,35 @@ describe('actual straps registry and notification integration', function()
       local out = registry.call('tool.collab_start', { name = 'real-core' }, ctx)
       local buf = tonumber(out:match('bufnr: (%d+)'))
       local path = out:match('path: ([^\n]+)')
-      registry.call('fn.mark_seen', ctx.bufnr, buf, true)
-      vim.api.nvim_exec_autocmds('BufWritePost', { buffer = buf })
-      drain()
-      check(not text(ctx.bufnr):find('collaboration saved:', 1, true))
-      vim.api.nvim_buf_set_lines(buf, 0, 0, false, { 'human edit' })
+      vim.api.nvim_buf_set_lines(buf, 0, 0, false, { 'human edit', '%%[straps:user]%%', '' })
       vim.api.nvim_buf_call(buf, function() vim.cmd('silent write') end)
       drain()
       check(text(ctx.bufnr):find('collaboration saved: ' .. path, 1, true) ~= nil)
       check(started == ctx.bufnr)
       local blocks = require('straps.state').parse(ctx.bufnr).messages
       check(blocks[#blocks].role == 'user')
+      local notice
+      for _, m in ipairs(blocks) do
+        for _, part in ipairs(type(m.content) == 'table' and m.content or { { text = m.content } }) do
+          if type(part.text) == 'string' and part.text:find('collaboration saved:', 1, true) then notice = part.text end
+        end
+      end
+      check(notice ~= nil and notice:find('+human edit\n+%%[straps:user]%%\n+\n', 1, true) ~= nil)
+      check(notice:sub(-#'(end of diff)') == '(end of diff)')
       check(registry.active_scope() == ctx.bufnr)
       check(registry.call('fn.capability', 'collab_read', { bufnr = buf }) == 'read')
       check(registry.call('tool.collab_read', { bufnr = buf }, ctx):find('     1\thuman edit', 1, true) ~= nil)
       check(registry.call('fn.capability', 'collab_edit', { bufnr = buf }) == 'edit')
       local before = text(ctx.bufnr)
+      local notify, errors = vim.notify, {}
+      vim.notify = function(msg) errors[#errors + 1] = msg end
       registry.call('tool.collab_edit', { bufnr = buf, old_string = 'human edit', new_string = 'agent edit' }, ctx)
       registry.call('tool.collab_patch', { bufnr = buf, hunks = { { start_line = 1, end_line = 1, new_text = 'patched', expected_old_text = 'agent edit' } } }, ctx)
       drain()
+      vim.notify = notify
       check(vim.fn.readfile(path)[1] == 'patched')
       check(vim.b[buf].straps_last_writer.session == ctx.bufnr)
-      check(text(ctx.bufnr) == before)
+      check(text(ctx.bufnr) == before and #errors == 0)
       registry.call('tool.collab_unsubscribe', { path = path }, ctx)
       vim.api.nvim_buf_delete(buf, { force = true })
     end)

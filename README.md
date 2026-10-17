@@ -33,9 +33,9 @@ Optional `dir` arguments must resolve within the global collaboration directory.
 
 ## Save notifications
 
-Subscriptions use buffer-local `BufWritePost` autocmds. They follow buffer renames, deduplicate repeated subscriptions, and coalesce saves queued before the scheduled callback runs. Each subscriber receives one short `[straps]` notice through `fn.session_notify`. Running agents receive steering. An idle subscriber receives the notice and a new run starts in that session, so the agent reacts to the save; its tool calls still pass through the normal permission gate.
+Subscriptions use buffer-local `BufWritePost` autocmds. They follow buffer renames, deduplicate repeated subscriptions, and coalesce saves queued before the scheduled callback runs. Each subscriber receives one `[straps]` notice through `fn.session_notify`, carrying a unified diff of the saved buffer against what that session last saw: its previous notice, its last `collab_read`, `collab_open`, or `collab_start`, its own collab write, or the buffer at subscribe time. The notice frames the diff as notebook data, not instructions. A diff over 20000 bytes is replaced by an instruction to call `collab_read`. A save with no changes since the session's last view sends no notice and starts no run. Running agents receive steering. An idle subscriber receives the notice and a new run starts in that session, so the agent reacts to the save; its tool calls still pass through the normal permission gate.
 
-A current straps writer stamp suppresses a notice to that writer only. Later human edits change the buffer tick and are not suppressed by an older stamp. Writes made with `noautocmd`, including straps file tools, do not emit `BufWritePost` and therefore do not generate these notices.
+A subscribed session's own `collab_edit` or `collab_patch` sends it no notice. If that write also saved changes the session had not seen, such as unsaved human edits, the tool result carries their diff, with line numbers of the buffer before the edit. Other subscribers receive a diff that includes the write. Writes made with `noautocmd`, including straps file tools, do not emit `BufWritePost` and therefore do not generate these notices.
 
 Unsubscribing cancels notices still queued in this plugin. Unloading or wiping either the notebook or the session removes that subscription. Notices already delivered to straps cannot be withdrawn. Reopening a notebook after unload requires subscribing again.
 
@@ -49,12 +49,12 @@ Subscriptions last for this Neovim process. Cross-process notifications and noti
 - `collab_edit {bufnr?, name?, dir?, old_string, new_string, replace_all?}` replaces exact text in the notebook buffer as one undo step and saves it.
 - `collab_patch {bufnr?, name?, dir?, hunks}` applies 1-based inclusive line hunks (`start_line`, `end_line`, `new_text`, optional `expected_old_text`) to the notebook buffer as one undo step and saves it.
 
-Both edit tools declare capability `edit`, take no `path` argument, run the straps disk-change and concurrent-writer checks, stamp the session as the writer, and notify other subscribers of the save. Agents must not use `read_file`, `edit_file`, `patch_file`, or `write_file` on notebooks.
-- `collab_subscribe {path}` subscribes the calling session to an existing regular file under the collaboration root.
+Both edit tools declare capability `edit`, take no `path` argument, run the straps disk-change and concurrent-writer checks, stamp the session as the writer, return a diff of unseen changes their write saved when the calling session is subscribed, and notify other subscribers of the save. Agents must not use `read_file`, `edit_file`, `patch_file`, or `write_file` on notebooks.
+- `collab_subscribe {path}` subscribes the calling session to an existing regular file under the collaboration root. Later notices diff against the buffer at subscribe time, so call `collab_read` after subscribing.
 - `collab_unsubscribe {path}` removes that session's subscription without loading a file.
 - `collab_list {}` lists up to 500 regular org files in the root directory, sorted by name, and subscriptions for loaded buffers. It does not create directories or load files; nested directories are not enumerated.
 
-`hook.collab_on_write` produces notices under the subscriber's registry scope. Hook failures produce an editor error notification and restore the previous scope.
+`hook.collab_on_write` produces notices under the subscriber's registry scope. It receives `{ buf, file, match, diff }` and returns the notice text; an empty `diff` returns no notice. Hook failures produce an editor error notification, restore the previous scope, and keep the session's baseline, so the next notice includes the missed change.
 
 ## Tests
 
