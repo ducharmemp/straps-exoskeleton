@@ -1,5 +1,5 @@
 {
-  description = "straps-collab — collaborative org-mode notebooks for straps.nvim";
+  description = "straps-exoskeleton — collaborative org-mode notebooks for straps.nvim";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
 
@@ -9,7 +9,7 @@
       forAllSystems = f: nixpkgs.lib.genAttrs systems (system: f nixpkgs.legacyPackages.${system});
 
       mkPlugin = pkgs: pkgs.vimUtils.buildVimPlugin {
-        pname = "straps-collab";
+        pname = "straps-exoskeleton";
         version = self.shortRev or self.dirtyShortRev or "dev";
         src = self;
         meta = {
@@ -20,25 +20,25 @@
     in
     {
       packages = forAllSystems (pkgs: rec {
-        straps-collab = mkPlugin pkgs;
-        default = straps-collab;
+        straps-exoskeleton = mkPlugin pkgs;
+        default = straps-exoskeleton;
       });
 
       overlays.default = final: prev: {
-        vimPlugins = prev.vimPlugins // { straps-collab = mkPlugin final; };
+        vimPlugins = prev.vimPlugins // { straps-exoskeleton = mkPlugin final; };
       };
 
       nixvimModules = let
         collab = { lib, config, pkgs, ... }:
-          let cfg = config.plugins."straps-collab";
+          let cfg = config.plugins."straps-exoskeleton";
           in {
-            options.plugins."straps-collab" = {
-              enable = lib.mkEnableOption "straps-collab shared org notebooks";
+            options.plugins."straps-exoskeleton" = {
+              enable = lib.mkEnableOption "straps-exoskeleton shared org notebooks";
               package = lib.mkOption {
                 type = lib.types.package;
                 default = mkPlugin pkgs;
-                defaultText = lib.literalExpression ''inputs.straps-collab.packages.''${system}.default'';
-                description = "The straps-collab plugin package.";
+                defaultText = lib.literalExpression ''inputs.straps-exoskeleton.packages.''${system}.default'';
+                description = "The straps-exoskeleton plugin package.";
               };
             };
             config = lib.mkIf cfg.enable {
@@ -49,7 +49,7 @@
             };
           };
       in {
-        "straps-collab" = collab;
+        "straps-exoskeleton" = collab;
         default = collab;
       };
 
@@ -69,7 +69,7 @@
           package = mkPlugin pkgs;
         }).check;
         tests = pkgs.stdenvNoCC.mkDerivation {
-          name = "straps-collab-tests";
+          name = "straps-exoskeleton-tests";
           src = self;
           nativeBuildInputs = [ pkgs.neovim pkgs.luajitPackages.busted pkgs.luajitPackages.nlua ];
           dontBuild = true;
