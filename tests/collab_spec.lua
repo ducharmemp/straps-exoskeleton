@@ -11,7 +11,7 @@ local function drain()
   assert(vim.wait(1000, function() return done end))
 end
 
-local reg, tmp, original_stdpath, initial_buffers, original_notify, errors
+local reg, tmp, original_stdpath, initial_buffers, original_notify, errors, original_ui
 local function registry()
   local r = { entries = {}, scope = nil, notices = {} }
   function r.define_default(spec)
@@ -55,6 +55,7 @@ before_each(function()
   original_notify = vim.notify
   errors = {}
   vim.notify = function(text) errors[#errors + 1] = text end
+  original_ui = package.loaded['straps.ui']
   initial_buffers = {}
   for _, b in ipairs(vim.api.nvim_list_bufs()) do initial_buffers[b] = true end
   reg = registry()
@@ -69,6 +70,7 @@ after_each(function()
   drain()
   vim.fn.stdpath = original_stdpath
   vim.notify = original_notify
+  package.loaded['straps.ui'] = original_ui
   vim.fn.delete(tmp, 'rf')
 end)
 
@@ -444,6 +446,288 @@ describe('collaboration behavior', function()
     check(vim.api.nvim_win_get_buf(win) == ctx.bufnr)
     check(vim.b[notebook].straps_collab_watch[tostring(ctx.bufnr)] ~= nil)
     vim.cmd('close')
+  end)
+
+  describe('StrapsCollabOpen', function()
+    local collab
+    local function notebook(name, lines)
+      local result = collab.open({ name = name })
+      if lines then
+        vim.api.nvim_buf_set_lines(result.bufnr, 0, -1, false, lines)
+        vim.api.nvim_buf_call(result.bufnr, function() vim.cmd('silent noautocmd write') end)
+      end
+      return result.path, result.bufnr
+    end
+    local function unload(buf) vim.api.nvim_buf_delete(buf, { force = true }) end
+    local function in_session()
+      local ctx = target()
+      vim.api.nvim_set_current_buf(ctx.bufnr)
+      return ctx, vim.api.nvim_get_current_win()
+    end
+    local function watch(buf, ctx) return (vim.b[buf].straps_collab_watch or {})[tostring(ctx.bufnr)] end
+    local function stub_picker(choose)
+      local seen = {}
+      package.loaded['straps.ui'] = { pick = function(items, opts, cb)
+        seen.items, seen.opts = items, opts
+        seen.calls = (seen.calls or 0) + 1
+        cb(choose and choose(items) or nil)
+      end }
+      return seen
+    end
+
+    before_each(function()
+      collab = require('straps_collab.collab')
+      dofile('plugin/straps_collab.lua')
+    end)
+
+    local function stub_tools()
+      for _, name in ipairs({ 'open', 'subscribe', 'start' }) do
+        reg.entries['tool.collab_' .. name].fn = function() error('tool called') end
+      end
+    end
+
+    it('validates context, name and notification entry when resuming directly', function()
+      fails(function() collab.resume({ name = 'x' }, { bufnr = 0 }) end, 'session context')
+      fails(function() collab.resume({}, target()) end, 'name is required')
+      reg.entries['fn.session_notify'] = nil
+      fails(function() collab.resume({ name = 'missing' }, target()) end, 'notification entry')
+    end)
+
+    it('refuses outside a session buffer without subscribing', function()
+      local _, buf = notebook('outside')
+      local ctx = target()
+      vim.api.nvim_set_current_buf(vim.api.nvim_create_buf(false, true))
+      fails(function() vim.cmd('StrapsCollabOpen outside') end, 'session buffer')
+      check(watch(buf, ctx) == nil and next(vim.b[buf].straps_collab_watch or {}) == nil)
+    end)
+
+    it('reports a missing notebook without creating the root', function()
+      in_session()
+      fails(function() vim.cmd('StrapsCollabOpen missing') end, 'no notebook')
+      check(vim.uv.fs_stat(tmp .. '/straps/collab') == nil)
+      check(reg.scope == nil)
+    end)
+
+    it('runs resume in the session scope and restores the prior scope', function()
+      notebook('scoped')
+      local ctx = in_session()
+      local resume, during = collab.resume, nil
+      collab.resume = function(...) during = reg.scope; return resume(...) end
+      reg.scope = 'prior'
+      vim.cmd('StrapsCollabOpen scoped')
+      collab.resume = resume
+      check(during == ctx.bufnr)
+      check(reg.scope == 'prior')
+      vim.cmd('close')
+    end)
+
+    it('reopens an unloaded notebook, subscribes the session and opens a split', function()
+      local path, buf = notebook('existing', { '#+TITLE: existing', 'kept line' })
+      unload(buf)
+      stub_tools()
+      local ctx, win = in_session()
+      local wins = #vim.api.nvim_list_wins()
+      vim.cmd('StrapsCollabOpen existing')
+      local nb = vim.api.nvim_get_current_buf()
+      check(vim.fs.normalize(vim.api.nvim_buf_get_name(nb)) == path)
+      check(vim.api.nvim_buf_get_lines(nb, 0, -1, false)[2] == 'kept line')
+      check(vim.bo[nb].filetype == 'org')
+      check(watch(nb, ctx) ~= nil)
+      check(vim.uv.fs_stat(tmp .. '/straps/collab/existing-1.org') == nil)
+      check(#vim.api.nvim_list_wins() == wins + 1)
+      check(vim.fn.winlayout()[1] == 'row')
+      check(vim.api.nvim_win_get_buf(win) == ctx.bufnr)
+      local result = collab.resume({ name = 'existing' }, ctx)
+      check(result.path == path and result.bufnr == nb and result.created == false)
+      check(result.autocmd == watch(nb, ctx))
+      vim.cmd('close')
+    end)
+
+    it('reuses the subscription and the notebook window on a second resume', function()
+      notebook('again')
+      local ctx, win = in_session()
+      vim.cmd('StrapsCollabOpen again')
+      local nb_win = vim.api.nvim_get_current_win()
+      local nb = vim.api.nvim_get_current_buf()
+      local group = watch(nb, ctx)
+      local wins = #vim.api.nvim_list_wins()
+      vim.api.nvim_set_current_win(win)
+      vim.cmd('StrapsCollabOpen again')
+      check(watch(nb, ctx) == group)
+      check(#vim.api.nvim_list_wins() == wins)
+      check(vim.api.nvim_get_current_win() == nb_win)
+      vim.api.nvim_buf_set_lines(nb, -1, -1, false, { 'seen by reopening' })
+      vim.api.nvim_buf_call(nb, function() vim.cmd('silent noautocmd write') end)
+      vim.api.nvim_set_current_win(win)
+      vim.cmd('StrapsCollabOpen again')
+      vim.api.nvim_buf_set_lines(nb, -1, -1, false, { 'after reopening' })
+      save(nb)
+      drain()
+      local text = reg.notices[#reg.notices] and reg.notices[#reg.notices].text or ''
+      check(text:find('+after reopening', 1, true) ~= nil)
+      check(text:find('+seen by reopening', 1, true) == nil)
+      vim.cmd('close')
+    end)
+
+    it('splits in the current tab when only another tab shows the notebook', function()
+      local _, buf = notebook('tabbed')
+      local ctx = in_session()
+      local home = vim.api.nvim_get_current_tabpage()
+      vim.cmd('tabnew')
+      local other = vim.api.nvim_get_current_tabpage()
+      finally(function()
+        if vim.api.nvim_tabpage_is_valid(other) then
+          vim.cmd('tabclose ' .. vim.api.nvim_tabpage_get_number(other))
+        end
+      end)
+      vim.api.nvim_win_set_buf(0, buf)
+      vim.api.nvim_set_current_tabpage(home)
+      local wins = #vim.api.nvim_tabpage_list_wins(home)
+      vim.cmd('StrapsCollabOpen tabbed')
+      check(vim.api.nvim_get_current_tabpage() == home)
+      check(#vim.api.nvim_tabpage_list_wins(home) == wins + 1)
+      check(watch(buf, ctx) ~= nil)
+      vim.cmd('close')
+    end)
+
+    it('keeps unsaved edits and diffs later saves against them', function()
+      local _, buf = notebook('unsaved', { 'saved' })
+      vim.api.nvim_buf_set_lines(buf, -1, -1, false, { 'unsaved line' })
+      local ctx = in_session()
+      vim.cmd('StrapsCollabOpen unsaved')
+      check(vim.api.nvim_buf_get_lines(buf, 0, -1, false)[2] == 'unsaved line')
+      vim.api.nvim_buf_set_lines(buf, -1, -1, false, { 'after resume' })
+      save(buf)
+      drain()
+      check(#reg.notices == 1 and reg.notices[1].target == ctx.bufnr)
+      local text = reg.notices[1] and reg.notices[1].text or ''
+      check(text:find('+after resume', 1, true) ~= nil)
+      check(text:find('+unsaved line', 1, true) == nil)
+      vim.cmd('close')
+    end)
+
+    it('refuses a loaded notebook whose file is gone', function()
+      local path = notebook('deleted')
+      vim.uv.fs_unlink(path)
+      in_session()
+      fails(function() vim.cmd('StrapsCollabOpen deleted') end, 'no file on disk')
+    end)
+
+    it('matches loaded buffers by exact name', function()
+      vim.fn.mkdir(tmp .. '/straps/collab', 'p')
+      vim.fn.bufload(vim.fn.bufadd(tmp .. '/straps/collab/x.org.bak'))
+      in_session()
+      fails(function() vim.cmd('StrapsCollabOpen x') end, 'no notebook')
+    end)
+
+    it('completes resumable notebook names by prefix without creating the root', function()
+      check(#collab.complete('') == 0)
+      check(vim.uv.fs_stat(tmp .. '/straps/collab') == nil)
+      local dir = tmp .. '/straps/collab'
+      vim.fn.mkdir(dir, 'p')
+      for _, name in ipairs({ 'alpha.org', 'alps.org', 'beta.org', 'a b.org', '..org' }) do vim.fn.writefile({}, dir .. '/' .. name) end
+      check(vim.deep_equal(collab.complete('al'), { 'alpha', 'alps' }))
+      check(vim.deep_equal(collab.complete(''), { 'alpha', 'alps', 'beta' }))
+      check(vim.deep_equal(vim.fn.getcompletion('StrapsCollabOpen al', 'cmdline'), { 'alpha', 'alps' }))
+    end)
+
+    it('lists notebooks newest first with titles, dates and subscribers', function()
+      local old = notebook('old', { '#+title: Older notes' })
+      local new = notebook('new', { 'no title here' })
+      vim.uv.fs_utime(old, 1000, 1000)
+      vim.uv.fs_utime(new, 2000000000, 2000000000)
+      local ctx = target()
+      collab.subscribe(old, ctx)
+      local items = collab.notebooks()
+      check(#items == 2 and items[1].name == 'new' and items[2].name == 'old')
+      check(items[2].title == 'Older notes' and items[1].title == '')
+      local label = collab.label(items[2])
+      check(label:find('Older notes', 1, true) ~= nil)
+      check(label:find(os.date('%Y-%m-%d', 1000), 1, true) ~= nil)
+      check(label:find('sessions: ' .. ctx.bufnr, 1, true) ~= nil)
+      check(collab.label(items[1]):find('sessions', 1, true) == nil)
+      check(collab.label({ name = 'same', title = 'same', mtime = 0, sessions = {} }):find('same  ·  same', 1, true) == nil)
+    end)
+
+    it('opens the picked notebook for the session captured before the picker', function()
+      local _, buf = notebook('picked')
+      local ctx, win = in_session()
+      vim.cmd('split')
+      local elsewhere = vim.api.nvim_get_current_win()
+      vim.api.nvim_win_set_buf(elsewhere, vim.api.nvim_create_buf(false, true))
+      vim.api.nvim_set_current_win(win)
+      local seen = stub_picker(function(items)
+        vim.api.nvim_set_current_win(elsewhere)
+        return items[1]
+      end)
+      local wins = #vim.api.nvim_list_wins()
+      vim.cmd('StrapsCollabOpen')
+      drain()
+      check(seen.calls == 1 and seen.opts.format_item == collab.label)
+      check(watch(buf, ctx) ~= nil)
+      check(vim.api.nvim_get_current_buf() == buf)
+      check(#vim.api.nvim_list_wins() == wins + 1)
+      check(vim.api.nvim_win_get_buf(win) == ctx.bufnr)
+      check(vim.fn.win_screenpos(vim.api.nvim_get_current_win())[1] == vim.fn.win_screenpos(win)[1])
+      vim.cmd('close')
+      vim.api.nvim_win_close(elsewhere, true)
+    end)
+
+    it('does nothing when the picker is cancelled', function()
+      local _, buf = notebook('cancelled')
+      in_session()
+      local seen = stub_picker(nil)
+      local wins = #vim.api.nvim_list_wins()
+      vim.v.errmsg = ''
+      vim.cmd('StrapsCollabOpen')
+      drain()
+      check(seen.calls == 1)
+      check(#errors == 0 and vim.v.errmsg == '')
+      check(next(vim.b[buf].straps_collab_watch or {}) == nil)
+      check(#vim.api.nvim_list_wins() == wins)
+    end)
+
+    for _, case in ipairs({ { 'a missing', false }, { 'an unaddressable-only', true } }) do
+      it('reports ' .. case[1] .. ' collaboration directory without opening the picker', function()
+        if case[2] then
+          vim.fn.mkdir(tmp .. '/straps/collab', 'p')
+          vim.fn.writefile({}, tmp .. '/straps/collab/a b.org')
+        end
+        in_session()
+        local seen = stub_picker(nil)
+        vim.cmd('StrapsCollabOpen')
+        check(seen.calls == nil)
+        check(errors[#errors] and errors[#errors]:find('no notebooks', 1, true) ~= nil)
+      end)
+    end
+
+    it('reports a picked notebook that disappeared before the choice', function()
+      local path, buf = notebook('vanished')
+      unload(buf)
+      in_session()
+      stub_picker(function(items)
+        vim.uv.fs_unlink(path)
+        return items[1]
+      end)
+      vim.cmd('StrapsCollabOpen')
+      drain()
+      check(errors[#errors] and errors[#errors]:find('no notebook', 1, true) ~= nil)
+      check(vim.fn.bufnr(path) == -1 or next(vim.b[vim.fn.bufnr(path)].straps_collab_watch or {}) == nil)
+    end)
+
+    it('reports a session buffer wiped before the choice arrives', function()
+      local _, buf = notebook('orphan')
+      local ctx = in_session()
+      stub_picker(function(items)
+        vim.api.nvim_set_current_buf(vim.api.nvim_create_buf(false, true))
+        vim.api.nvim_buf_delete(ctx.bufnr, { force = true })
+        return items[1]
+      end)
+      vim.cmd('StrapsCollabOpen')
+      drain()
+      check(errors[#errors] and errors[#errors]:find('is gone', 1, true) ~= nil)
+      check(next(vim.b[buf].straps_collab_watch or {}) == nil)
+    end)
   end)
 end)
 

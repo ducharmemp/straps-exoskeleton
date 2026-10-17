@@ -2,7 +2,7 @@
 
 straps-exoskeleton gives straps.nvim users and agents a shared org document for questions, code changes, constraints, and evidence. Both participants can edit the specification and the code; the template imposes no schema.
 
-The project name is straps-exoskeleton. Existing identifiers remain `straps-collab` for Nix packages and modules, `straps_collab` for Lua, and `:StrapsCollab` for the command.
+The project name is straps-exoskeleton. Existing identifiers remain `straps-collab` for Nix packages and modules, `straps_collab` for Lua, and `:StrapsCollab` and `:StrapsCollabOpen` for the commands.
 
 ## Setup
 
@@ -13,7 +13,7 @@ require('straps').setup()
 require('straps_collab').register()
 ```
 
-Registration adds tools and `fn.system_prompt_layer.collab`. Existing transcripts keep their original system prompt. Start a new straps session to receive the prompt fragment. The command also registers entries when invoked, but cannot retrofit a stored system prompt.
+Registration adds tools and `fn.system_prompt_layer.collab`. Existing transcripts keep their original system prompt. Start a new straps session to receive the prompt fragment. The commands also register entries when invoked, but cannot retrofit a stored system prompt.
 
 orgmode.nvim is optional. Every collaboration buffer receives filetype `org` when loaded. Configure orgmode.nvim yourself for its folding, TODO, agenda, and link features; this plugin does not override its configuration or execute source blocks.
 
@@ -29,15 +29,24 @@ The command creates a new file and opens it in a split, preserving the transcrip
 
 Files live in `stdpath('data')/straps/collab`, independent of the current repository. Every start creates a new file: repeated names and timestamp collisions receive numeric suffixes. `collab_open` reopens an existing named file without subscribing; follow it with `collab_subscribe` to receive save notices. A session can subscribe to several notebooks, and several sessions can subscribe to one notebook.
 
+To reopen an existing notebook and subscribe the session you are in, run this from the session buffer:
+
+```vim
+:StrapsCollabOpen
+:StrapsCollabOpen my-proposal
+```
+
+Without a name, the command opens a picker of the notebooks in the collaboration root through straps' `require('straps.ui').pick`, which uses snacks.nvim's picker when installed and `vim.ui.select` otherwise. Each row shows the name, the `#+TITLE` when it is set and differs from the name, the modification time, and the buffer numbers of sessions already subscribed, newest first. Files whose names the command cannot address, such as names with spaces or an uppercase `.ORG`, are left out, so `collab_list` can show files the picker does not. With no notebooks, the command reports the root directory and opens no picker. After a pick, focus returns to the session's window in the current tab before the split opens. With a name, the command opens that notebook directly; `<Tab>` completes names. The command reaches only notebooks directly in the root. It refuses a missing notebook and a loaded notebook buffer whose file is gone from disk. It reuses a window in the current tab that already shows the notebook, otherwise it opens a split. Running it again for a notebook the session already subscribes to keeps that subscription and resets its baseline. Like `:StrapsCollab`, it calls the Lua functions directly and does not pass through the tool guard chain.
+
 Optional `dir` arguments must resolve within the global collaboration directory. File and directory symlinks below that root are refused. These checks prevent accidental escapes; they do not provide a sandbox against another process changing filesystem paths during an operation.
 
 ## Save notifications
 
-Subscriptions use buffer-local `BufWritePost` autocmds. They follow buffer renames, deduplicate repeated subscriptions, and coalesce saves queued before the scheduled callback runs. Each subscriber receives one `[straps]` notice through `fn.session_notify`, carrying a unified diff of the saved buffer against what that session last saw: its previous notice, its last `collab_read`, `collab_open`, or `collab_start`, its own collab write, or the buffer at subscribe time. The notice frames the diff as notebook data, not instructions. A diff over 20000 bytes is replaced by an instruction to call `collab_read`. A save with no changes since the session's last view sends no notice and starts no run. Running agents receive steering. An idle subscriber receives the notice and a new run starts in that session, so the agent reacts to the save; its tool calls still pass through the normal permission gate.
+Subscriptions use buffer-local `BufWritePost` autocmds. They follow buffer renames, deduplicate repeated subscriptions, and coalesce saves queued before the scheduled callback runs. Each subscriber receives one `[straps]` notice through `fn.session_notify`, carrying a unified diff of the saved buffer against what that session last saw: its previous notice, its last `collab_read`, `collab_open`, or `collab_start`, its last `:StrapsCollabOpen`, its own collab write, or the buffer at subscribe time. The notice frames the diff as notebook data, not instructions. A diff over 20000 bytes is replaced by an instruction to call `collab_read`. A save with no changes since the session's last view sends no notice and starts no run. Running agents receive steering. An idle subscriber receives the notice and a new run starts in that session, so the agent reacts to the save; its tool calls still pass through the normal permission gate.
 
 A subscribed session's own `collab_edit` or `collab_patch` sends it no notice. If that write also saved changes the session had not seen, such as unsaved human edits, the tool result carries their diff, with line numbers of the buffer before the edit. Other subscribers receive a diff that includes the write. Writes made with `noautocmd`, including straps file tools, do not emit `BufWritePost` and therefore do not generate these notices.
 
-Unsubscribing cancels notices still queued in this plugin. Unloading or wiping either the notebook or the session removes that subscription. Notices already delivered to straps cannot be withdrawn. Reopening a notebook after unload requires subscribing again.
+Unsubscribing cancels notices still queued in this plugin. Unloading or wiping either the notebook or the session removes that subscription. Notices already delivered to straps cannot be withdrawn. Reopening a notebook after unload requires subscribing again, with `:StrapsCollabOpen` or `collab_subscribe`.
 
 Subscriptions last for this Neovim process. Cross-process notifications and notifications for unsaved edits are deferred. Notebook edits neither authorize commands nor change permission grants.
 

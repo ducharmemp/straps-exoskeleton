@@ -256,6 +256,96 @@ function M.start(input, ctx)
   return result
 end
 
+M.root = root
+
+local function loaded_buf(path)
+  for _, b in ipairs(vim.api.nvim_list_bufs()) do
+    if vim.api.nvim_buf_is_loaded(b) and vim.fs.normalize(vim.api.nvim_buf_get_name(b)) == path then return b end
+  end
+end
+
+function M.resume(input, ctx)
+  session(ctx)
+  assert(require('straps.registry').get('fn.session_notify'), 'collab: straps notification entry is unavailable')
+  input = input or {}
+  assert(input.name ~= nil, 'collab: name is required')
+  local file = filename(input.name)
+  local path = directory(nil, false) .. '/' .. file
+  local st, err, code = vim.uv.fs_lstat(path)
+  if not st then
+    if code ~= 'ENOENT' then error('collab: ' .. tostring(err), 0) end
+    if loaded_buf(path) then error('collab: ' .. file .. ' has no file on disk; save it first', 0) end
+    error('collab: no notebook ' .. path, 0)
+  end
+  local autocmd = M.subscribe(path, ctx)
+  return { path = path, created = false, bufnr = load_buf(path), autocmd = autocmd }
+end
+
+local function title_of(path)
+  for _, line in ipairs(vim.fn.readfile(path, '', 20)) do
+    local title = line:match('^#%+[Tt][Ii][Tt][Ll][Ee]:%s*(.-)%s*$')
+    if title then return title end
+  end
+  return ''
+end
+
+local function notebook_record(dir, name)
+  local path = dir .. '/' .. name
+  local stat = assert(vim.uv.fs_stat(path))
+  local sessions = {}
+  local buf = loaded_buf(path)
+  if buf then
+    for id in pairs(vim.b[buf].straps_collab_watch or {}) do sessions[#sessions + 1] = id end
+  end
+  table.sort(sessions, function(a, b) return tonumber(a) < tonumber(b) end)
+  return { name = name:sub(1, -5), path = path, mtime = stat.mtime.sec, title = title_of(path), sessions = sessions }
+end
+
+function M.notebooks()
+  local dir = directory(nil, false)
+  local handle, err, code = vim.uv.fs_scandir(dir)
+  if not handle then
+    if code == 'ENOENT' then return {} end
+    error('collab: ' .. tostring(err))
+  end
+  local out = {}
+  while true do
+    local name, kind = vim.uv.fs_scandir_next(handle)
+    if not name then break end
+    if kind == 'file' and name:sub(-4) == '.org' then
+      local ok, mapped = pcall(filename, name:sub(1, -5))
+      if ok and mapped == name then
+        local good, record = pcall(notebook_record, dir, name)
+        if good then out[#out + 1] = record end
+      end
+    end
+  end
+  table.sort(out, function(a, b)
+    if a.mtime ~= b.mtime then return a.mtime > b.mtime end
+    return a.name < b.name
+  end)
+  return out
+end
+
+function M.complete(arglead)
+  local ok, items = pcall(M.notebooks)
+  if not ok then return {} end
+  local names = {}
+  for _, item in ipairs(items) do
+    if vim.startswith(item.name, arglead or '') then names[#names + 1] = item.name end
+  end
+  table.sort(names)
+  return names
+end
+
+function M.label(item)
+  local parts = { item.name }
+  if item.title ~= '' and item.title ~= item.name then parts[#parts + 1] = item.title end
+  parts[#parts + 1] = os.date('%Y-%m-%d %H:%M', item.mtime)
+  if #item.sessions > 0 then parts[#parts + 1] = 'sessions: ' .. table.concat(item.sessions, ', ') end
+  return table.concat(parts, '  ·  ')
+end
+
 function M.list()
   local dir = directory(nil, false)
   local handle, err, code = vim.uv.fs_scandir(dir)

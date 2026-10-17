@@ -24,6 +24,22 @@ COMMANDS                                            *straps-collab-commands*
     The command calls the Lua start function directly with the session
     context, so it does not pass through the tool guard chain.
 
+:StrapsCollabOpen [name]
+    Run from a straps session buffer. Reopen an existing notebook in the
+    collaboration root, subscribe that session, and show the notebook,
+    reusing a window in the current tab or opening a split. Without a name,
+    pick from the notebooks with straps' require('straps.ui').pick (snacks
+    picker or vim.ui.select): rows show name, #+TITLE when set and different
+    from the name, modification time, and subscribed session buffer numbers,
+    newest first. Files whose names the command cannot address, such as names
+    with spaces or an uppercase .ORG, are left out. With no notebooks it
+    reports the root and opens no picker. After a pick, focus returns to the
+    session's window in the current tab before the split. A name completes
+    with <Tab>. Only notebooks directly in the root are reachable. Refuses a
+    missing notebook and a loaded buffer whose file is gone. A repeat run keeps
+    the existing subscription and resets its baseline. Calls Lua directly,
+    bypassing the tool guard chain.
+
 TOOLS                                                  *straps-collab-tools*
 
 collab_start {name?, dir?}
@@ -66,7 +82,8 @@ collab_list {}
 Files live under stdpath('data')/straps/collab, independent of repository.
 Optional dir must resolve within that root. Symlinks below the root are
 refused, including file symlinks. Checks are not a sandbox against concurrent
-filesystem changes. subscribe/start require ctx.bufnr to name a straps session.
+filesystem changes. subscribe, start and :StrapsCollabOpen require a straps
+session buffer.
 
 NOTIFICATIONS                                          *straps-collab-hooks*
 
@@ -76,9 +93,9 @@ call hook.collab_on_write under each subscriber's registry scope with
 (vim.text.diff, or vim.diff on 0.11) of the saved lines against that
 session's baseline. The baseline is the buffer at subscribe time, then moves
 to the lines in each delivered notice, each collab_read, collab_open or
-collab_start result, and each collab write by that session. A hook or notify
-failure keeps the baseline. The previous registry scope is restored even if
-the hook fails; failures produce an editor error.
+collab_start result, each :StrapsCollabOpen, and each collab write by that
+session. A hook or notify failure keeps the baseline. The previous registry
+scope is restored even if the hook fails; failures produce an editor error.
 Any number of saves before the scheduled callback runs produce at most one
 notice for each (notebook buffer, subscribing session) pair, and its diff
 spans all of them. A save with no changes since the baseline sends no notice.
@@ -88,14 +105,15 @@ The callback uses the current buffer name, so subscriptions follow renames.
 
 A session's own collab_edit or collab_patch moves its baseline past the
 write, so it receives no notice for it; unseen changes saved by that write
-appear in the tool result. A read, open or start resets the baseline and
-drops a save captured but not yet delivered. Writes with noautocmd (including
-straps file tools) emit no BufWritePost notice.
+appear in the tool result. A read, open, start or :StrapsCollabOpen resets
+the baseline and drops a save captured but not yet delivered. Writes with
+noautocmd (including straps file tools) emit no BufWritePost notice.
 
 Unloading or wiping either buffer removes the subscription. Subscribe again
-after reopening. An idle subscriber receives the notice and a new run starts
-in that session; running agents receive steering. Saves do not grant execution
-permission: tool calls in the started run pass through the normal gate.
+after reopening, with :StrapsCollabOpen or collab_subscribe. An idle
+subscriber receives the notice and a new run starts in that session; running
+agents receive steering. Saves do not grant execution permission: tool calls
+in the started run pass through the normal gate.
 
 Notifications cover saves in this Neovim process only. Unsaved-edit and
 cross-process notification support remain deferred.
@@ -106,5 +124,5 @@ fn.system_prompt_layer.collab asks agents to coordinate bounded subagent tasks,
 collect evidence and constraints, preserve human edits, use notice diffs as
 context and collab_read when they are not enough, and set expected_old_text
 or re-read before collab_patch. Neither party is restricted to code or specs.
-The command can register tools on invocation but cannot update stored prompts.
+The commands can register tools on invocation but cannot update stored prompts.
 Existing sessions keep the system prompt stored in their transcript.
