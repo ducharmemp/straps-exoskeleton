@@ -260,6 +260,42 @@ describe('collaboration behavior', function()
     fails(function() call('read', { bufnr = outside }) end, 'dir must be under')
   end)
 
+  it('edits and patches the live notebook buffer by bufnr as one undo step', function()
+    local writer, other = target(), target()
+    local path, buf = opened('changes', writer)
+    call('subscribe', { path = path }, other)
+    vim.api.nvim_buf_set_lines(buf, 0, -1, false, { 'alpha', 'beta', 'gamma' })
+    local out = call('edit', { bufnr = buf, old_string = 'beta', new_string = 'BETA' }, writer)
+    check(out:find('1 replacement', 1, true) ~= nil)
+    check(vim.fn.readfile(path)[2] == 'BETA')
+    check(not vim.bo[buf].modified)
+    vim.api.nvim_buf_call(buf, function() vim.cmd('silent undo') end)
+    check(vim.api.nvim_buf_get_lines(buf, 0, -1, false)[2] == 'beta')
+    vim.api.nvim_buf_call(buf, function() vim.cmd('silent redo') end)
+    fails(function() call('edit', { bufnr = buf, old_string = 'missing', new_string = 'x' }, writer) end, 'not found')
+    vim.api.nvim_buf_set_lines(buf, 0, -1, false, { 'a', 'a' })
+    fails(function() call('edit', { bufnr = buf, old_string = 'a', new_string = 'b' }, writer) end, 'matches 2 times')
+    check(call('edit', { name = 'changes', old_string = 'a', new_string = 'b', replace_all = true }, writer):find('2 replacements', 1, true) ~= nil)
+    check(table.concat(vim.fn.readfile(path), ',') == 'b,b')
+    call('patch', { bufnr = buf, hunks = {
+      { start_line = 2, end_line = 2, new_text = 'two\nlines', expected_old_text = 'b' },
+      { start_line = 1, end_line = 0, new_text = 'first' },
+    } }, writer)
+    check(table.concat(vim.api.nvim_buf_get_lines(buf, 0, -1, false), ',') == 'first,b,two,lines')
+    check(table.concat(vim.fn.readfile(path), ',') == 'first,b,two,lines')
+    fails(function() call('patch', { bufnr = buf, hunks = { { start_line = 1, end_line = 1, new_text = 'x', expected_old_text = 'nope' } } }, writer) end, 'mismatch')
+    fails(function() call('patch', { bufnr = buf, hunks = { { start_line = 1, end_line = 2, new_text = 'x' }, { start_line = 2, end_line = 3, new_text = 'y' } } }, writer) end, 'overlap')
+    check(table.concat(vim.api.nvim_buf_get_lines(buf, 0, -1, false), ',') == 'first,b,two,lines')
+    fails(function() call('edit', { bufnr = vim.api.nvim_create_buf(true, false), old_string = 'a', new_string = 'b' }, writer) end, 'not a collaboration notebook')
+    check(reg.get('tool.collab_edit').capability == 'edit' and reg.get('tool.collab_patch').capability == 'edit')
+    check(reg.get('tool.collab_edit').input_schema.properties.path == nil)
+    check(reg.get('tool.collab_patch').input_schema.properties.path == nil)
+    drain()
+    local to_other = 0
+    for _, n in ipairs(reg.notices) do if n.target == other.bufnr then to_other = to_other + 1 end end
+    check(to_other >= 1)
+  end)
+
   it('starts a run in an idle subscribed session on save and leaves running sessions to steering', function()
     local started, running = {}, false
     package.loaded['straps.loop'] = {

@@ -46,6 +46,10 @@ Subscriptions last for this Neovim process. Cross-process notifications and noti
 - `collab_start {name?, dir?}` creates a unique file, subscribes the calling session, opens the notebook in a split without moving focus, and returns the live buffer content with line numbers.
 - `collab_open {name?, dir?}` creates or reopens a named file without a subscription, opens it in a split when no window shows it, and returns the live buffer content.
 - `collab_read {bufnr?, name?, dir?}` returns the notebook's live buffer content with line numbers, including unsaved edits. It takes a buffer number or notebook name, never a filesystem path, and declares capability `read` in `fn.capability`. Like the built-in `context` tool, it has no `path` argument for a permission layer to resolve against the project root.
+- `collab_edit {bufnr?, name?, dir?, old_string, new_string, replace_all?}` replaces exact text in the notebook buffer as one undo step and saves it.
+- `collab_patch {bufnr?, name?, dir?, hunks}` applies 1-based inclusive line hunks (`start_line`, `end_line`, `new_text`, optional `expected_old_text`) to the notebook buffer as one undo step and saves it.
+
+Both edit tools declare capability `edit`, take no `path` argument, run the straps disk-change and concurrent-writer checks, stamp the session as the writer, and notify other subscribers of the save. Agents must not use `read_file`, `edit_file`, `patch_file`, or `write_file` on notebooks.
 - `collab_subscribe {path}` subscribes the calling session to an existing regular file under the collaboration root.
 - `collab_unsubscribe {path}` removes that session's subscription without loading a file.
 - `collab_list {}` lists up to 500 regular org files in the root directory, sorted by name, and subscriptions for loaded buffers. It does not create directories or load files; nested directories are not enumerated.

@@ -39,6 +39,15 @@ collab_read {bufnr?, name?, dir?}
     Takes a notebook buffer number or a notebook name, never a filesystem path.
     Declared with capability "read". Like the built-in context tool, it has no
     path argument for a permission layer to resolve against the project root.
+collab_edit {bufnr?, name?, dir?, old_string, new_string, replace_all?}
+    Replace exact text in the notebook buffer as one undo step, then save.
+collab_patch {bufnr?, name?, dir?, hunks}
+    Apply 1-based inclusive line hunks to the notebook buffer as one undo
+    step, then save. Hunks take start_line, end_line, new_text, and optional
+    expected_old_text; end_line = start_line - 1 inserts.
+    Both edit tools declare capability "edit", take no path argument, run the
+    straps disk-change and concurrent-writer checks, stamp the writer, and
+    notify other subscribers of the save.
 collab_subscribe {path}
     Subscribe the calling session to saves of an existing regular file.
     Repeated subscriptions return the existing group id.
