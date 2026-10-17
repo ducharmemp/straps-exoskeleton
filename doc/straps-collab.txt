@@ -1,0 +1,72 @@
+*straps-collab.txt*  Shared org notebooks for straps.nvim
+
+SETUP                                                        *straps-collab*
+
+Requires Neovim >= 0.11 and straps.nvim on runtimepath. After straps setup,
+call require('straps_collab').register() before creating agent sessions.
+Registration adds fn.system_prompt_layer.collab; existing transcripts retain
+their stored system prompt. Both humans and agents may edit code and specs.
+
+orgmode.nvim is optional. Buffers receive filetype org on load. Configure
+orgmode.nvim yourself; straps-collab does not configure agendas or execute
+source blocks. The org template has no required headings or schema.
+
+COMMANDS                                            *straps-collab-commands*
+
+:StrapsCollab [name]
+    Run from a straps session buffer. Register entries, create a new org file,
+    subscribe that session, and open the notebook in a split. Other buffers
+    are refused before file creation. A missing name uses a timestamp.
+    Repeated names receive numeric suffixes; every start creates a new file.
+    A custom tool.collab_start must preserve the response line bufnr: N,
+    naming the notebook buffer, because the command uses it to open the split.
+
+TOOLS                                                  *straps-collab-tools*
+
+collab_start {name?, dir?}
+    Create a unique file and subscribe the calling session.
+collab_open {name?, dir?}
+    Create or reopen a named file without subscribing. Existing content and
+    unsaved buffer edits are retained. Returns path, created, and bufnr text.
+collab_subscribe {path}
+    Subscribe the calling session to saves of an existing regular file.
+    Repeated subscriptions return the existing group id.
+collab_unsubscribe {path}
+    Remove that session's subscription and pending plugin notices. Does not
+    load a file. Notices already delivered to straps cannot be withdrawn.
+collab_list {}
+    List up to 500 regular org files in the root directory, sorted by name,
+    and subscribers for loaded buffers. No directory creation or buffer loads.
+    Nested directories are not enumerated.
+
+Files live under stdpath('data')/straps/collab, independent of repository.
+Optional dir must resolve within that root. Symlinks below the root are
+refused, including file symlinks. Checks are not a sandbox against concurrent
+filesystem changes. subscribe/start require ctx.bufnr to name a straps session.
+
+NOTIFICATIONS                                          *straps-collab-hooks*
+
+Buffer-local BufWritePost handlers call hook.collab_on_write under each
+subscriber's registry scope, then fn.session_notify. The previous registry
+scope is restored even if the hook fails; failures produce an editor error.
+Any number of saves before the scheduled callback runs produce at most one
+notice for each (notebook buffer, subscribing session) pair.
+The callback uses the current buffer name, so subscriptions follow renames.
+
+Only a writer stamp matching both session and current changedtick suppresses
+self-notices. An older agent stamp does not suppress later human edits.
+Writes with noautocmd (including straps file tools) emit no BufWritePost notice.
+
+Unloading or wiping either buffer removes the subscription. Subscribe again
+after reopening. Idle agents receive a notice without starting; running agents
+receive steering. Saves do not grant execution permission.
+
+Notifications cover saves in this Neovim process only. Unsaved-edit and
+cross-process notification support remain deferred.
+
+PROMPT                                                 *straps-collab-prompt*
+
+fn.system_prompt_layer.collab asks agents to coordinate bounded subagent tasks,
+collect evidence and constraints, preserve human edits, and re-read live org
+content before targeted edits. Neither party is restricted to code or specs.
+The command can register tools on invocation but cannot update stored prompts.

@@ -1,0 +1,8 @@
+package.path = './lua/?.lua;./lua/?/init.lua;' .. package.path
+
+-- Run each spec in its own headless Neovim via nlua, like straps itself.
+return {
+  default = {
+    lua = 'nlua',
+  },
+}
