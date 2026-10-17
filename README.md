@@ -33,7 +33,7 @@ Optional `dir` arguments must resolve within the global collaboration directory.
 
 ## Save notifications
 
-Subscriptions use buffer-local `BufWritePost` autocmds. They follow buffer renames, deduplicate repeated subscriptions, and coalesce saves queued before the scheduled callback runs. Each subscriber receives one short `[straps]` notice through `fn.session_notify`. Running agents receive steering; idle agents are not started.
+Subscriptions use buffer-local `BufWritePost` autocmds. They follow buffer renames, deduplicate repeated subscriptions, and coalesce saves queued before the scheduled callback runs. Each subscriber receives one short `[straps]` notice through `fn.session_notify`. Running agents receive steering. An idle subscriber receives the notice and a new run starts in that session, so the agent reacts to the save; its tool calls still pass through the normal permission gate.
 
 A current straps writer stamp suppresses a notice to that writer only. Later human edits change the buffer tick and are not suppressed by an older stamp. Writes made with `noautocmd`, including straps file tools, do not emit `BufWritePost` and therefore do not generate these notices.
 
@@ -45,7 +45,7 @@ Subscriptions last for this Neovim process. Cross-process notifications and noti
 
 - `collab_start {name?, dir?}` creates a unique file, subscribes the calling session, opens the notebook in a split without moving focus, and returns the live buffer content with line numbers.
 - `collab_open {name?, dir?}` creates or reopens a named file without a subscription, opens it in a split when no window shows it, and returns the live buffer content.
-- `collab_read {path}` returns the notebook's live buffer content with line numbers, including unsaved edits.
+- `collab_read {bufnr?, name?, dir?}` returns the notebook's live buffer content with line numbers, including unsaved edits. It takes a buffer number or notebook name, never a filesystem path, and declares capability `read` in `fn.capability`. Like the built-in `context` tool, it has no `path` argument for a permission layer to resolve against the project root.
 - `collab_subscribe {path}` subscribes the calling session to an existing regular file under the collaboration root.
 - `collab_unsubscribe {path}` removes that session's subscription without loading a file.
 - `collab_list {}` lists up to 500 regular org files in the root directory, sorted by name, and subscriptions for loaded buffers. It does not create directories or load files; nested directories are not enumerated.

@@ -34,8 +34,11 @@ collab_open {name?, dir?}
     Create or reopen a named file without subscribing. Existing content and
     unsaved buffer edits are retained. Open it in a split when no window shows
     it. Returns path, created, bufnr, and the live buffer content.
-collab_read {path}
+collab_read {bufnr?, name?, dir?}
     Return the live buffer content with line numbers, including unsaved edits.
+    Takes a notebook buffer number or a notebook name, never a filesystem path.
+    Declared with capability "read". Like the built-in context tool, it has no
+    path argument for a permission layer to resolve against the project root.
 collab_subscribe {path}
     Subscribe the calling session to saves of an existing regular file.
     Repeated subscriptions return the existing group id.
@@ -66,8 +69,9 @@ self-notices. An older agent stamp does not suppress later human edits.
 Writes with noautocmd (including straps file tools) emit no BufWritePost notice.
 
 Unloading or wiping either buffer removes the subscription. Subscribe again
-after reopening. Idle agents receive a notice without starting; running agents
-receive steering. Saves do not grant execution permission.
+after reopening. An idle subscriber receives the notice and a new run starts
+in that session; running agents receive steering. Saves do not grant execution
+permission: tool calls in the started run pass through the normal gate.
 
 Notifications cover saves in this Neovim process only. Unsaved-edit and
 cross-process notification support remain deferred.

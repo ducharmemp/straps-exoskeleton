@@ -245,13 +245,46 @@ describe('collaboration behavior', function()
     check(#vim.api.nvim_list_wins() == wins + 1)
   end)
 
-  it('reads unsaved notebook edits from the buffer', function()
+  it('reads unsaved notebook edits from the buffer by bufnr or name as a read capability', function()
     local path, buf = opened('live')
     vim.api.nvim_buf_set_lines(buf, 0, -1, false, { 'unsaved human line' })
-    local out = call('read', { path = path })
+    local out = call('read', { bufnr = buf })
     check(out:find('     1\tunsaved human line', 1, true) ~= nil)
     check(out:find('modified: true', 1, true) ~= nil)
     check(vim.fn.readfile(path)[1] ~= 'unsaved human line')
+    check(call('read', { name = 'live' }):find('     1\tunsaved human line', 1, true) ~= nil)
+    check(reg.get('tool.collab_read').capability == 'read')
+    check(reg.get('tool.collab_read').input_schema.properties.path == nil)
+    fails(function() call('read', { bufnr = vim.api.nvim_create_buf(true, false) }) end, 'not a collaboration notebook')
+    local outside = vim.fn.bufadd(tmp .. '/outside.org')
+    fails(function() call('read', { bufnr = outside }) end, 'dir must be under')
+  end)
+
+  it('starts a run in an idle subscribed session on save and leaves running sessions to steering', function()
+    local started, running = {}, false
+    package.loaded['straps.loop'] = {
+      running = function() return running end,
+      start = function(b) started[#started + 1] = b end,
+    }
+    local ctx = target()
+    local _, buf = opened('wake', ctx)
+    reg.entries['fn.session_notify'].fn = function() return 'append' end
+    save(buf)
+    drain()
+    drain()
+    check(#started == 1 and started[1] == ctx.bufnr)
+    running = true
+    save(buf)
+    drain()
+    drain()
+    check(#started == 1)
+    running = false
+    reg.entries['fn.session_notify'].fn = function() return 'steer' end
+    save(buf)
+    drain()
+    drain()
+    check(#started == 1)
+    package.loaded['straps.loop'] = nil
   end)
 
   it('registers command with explicit context, opens a split, rejects other buffers', function()

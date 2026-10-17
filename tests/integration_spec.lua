@@ -33,6 +33,9 @@ describe('actual straps registry and notification integration', function()
     vim.b[ctx.bufnr].straps_session = true
     registry.ensure_scope(ctx.bufnr)
     local old = registry.set_active_scope(ctx.bufnr)
+    local loop = require('straps.loop')
+    local real_start, started = loop.start, nil
+    loop.start = function(b) started = b end
     local ok, err = pcall(function()
       local out = registry.call('tool.collab_start', { name = 'real-core' }, ctx)
       local buf = tonumber(out:match('bufnr: (%d+)'))
@@ -45,11 +48,16 @@ describe('actual straps registry and notification integration', function()
       vim.api.nvim_buf_call(buf, function() vim.cmd('silent write') end)
       drain()
       check(text(ctx.bufnr):find('collaboration saved: ' .. path, 1, true) ~= nil)
-      check(not require('straps.loop').running(ctx.bufnr))
+      check(started == ctx.bufnr)
+      local blocks = require('straps.state').parse(ctx.bufnr).messages
+      check(blocks[#blocks].role == 'user')
       check(registry.active_scope() == ctx.bufnr)
+      check(registry.call('fn.capability', 'collab_read', { bufnr = buf }) == 'read')
+      check(registry.call('tool.collab_read', { bufnr = buf }, ctx):find('     1\thuman edit', 1, true) ~= nil)
       registry.call('tool.collab_unsubscribe', { path = path }, ctx)
       vim.api.nvim_buf_delete(buf, { force = true })
     end)
+    loop.start = real_start
     registry.set_active_scope(old)
     vim.api.nvim_buf_delete(ctx.bufnr, { force = true })
     vim.fn.stdpath = original
