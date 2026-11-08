@@ -1,7 +1,7 @@
-local core = os.getenv('STRAPS_TEST_RTP')
+local core = os.getenv('STRAPS_ROOT') or os.getenv('STRAPS_TEST_RTP')
 if not core or core == '' then
   describe('straps integration', function()
-    pending('requires STRAPS_TEST_RTP pointing to a straps checkout')
+    pending('requires STRAPS_ROOT (or legacy STRAPS_TEST_RTP) pointing to a straps checkout')
   end)
   return
 end

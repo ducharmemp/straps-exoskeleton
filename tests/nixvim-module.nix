@@ -13,13 +13,13 @@ let
     ];
   }).config;
   disabled = evaluate modules.default { };
-  enabled = evaluate modules.default { plugins."straps-collab".enable = true; };
-  named = evaluate modules."straps-collab" { plugins."straps-collab".enable = true; };
+  enabled = evaluate modules.default { plugins."straps-exoskeleton".enable = true; };
+  named = evaluate modules."straps-exoskeleton" { plugins."straps-exoskeleton".enable = true; };
   custom = evaluate modules.default {
-    plugins."straps-collab" = { enable = true; package = pkgs.emptyDirectory; };
+    plugins."straps-exoskeleton" = { enable = true; package = pkgs.emptyDirectory; };
   };
   ordered = evaluate modules.default {
-    plugins."straps-collab".enable = true;
+    plugins."straps-exoskeleton".enable = true;
     extraConfigLua = "require('straps').setup({})";
   };
   registration = "require('straps_collab').register()\n";
@@ -36,5 +36,5 @@ let
 in {
   inherit predicates;
   check = assert lib.all (value: value) (builtins.attrValues predicates);
-    pkgs.runCommand "straps-collab-nixvim-module-contract" { } "touch $out";
+    pkgs.runCommand "straps-exoskeleton-nixvim-module-contract" { } "touch $out";
 }

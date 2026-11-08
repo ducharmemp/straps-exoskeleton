@@ -1,14 +1,19 @@
 *straps-collab.txt*  straps-exoskeleton: shared org notebooks for straps.nvim
 
-SETUP                                                        *straps-collab*
+SETUP                                     *straps-exoskeleton* *straps-collab*
 
+                                    *straps_collab.setup()* *straps_collab.register()*
 Requires Neovim >= 0.11 and straps.nvim on runtimepath. After straps setup,
-call require('straps_collab').register() before creating agent sessions.
+call require('straps_collab').setup() before creating agent sessions.
+setup(opts) calls register() and returns the module. It accepts an optional
+table with no supported keys; unknown keys warn and non-table arguments error.
+:checkhealth straps_collab reports registration without creating notebooks.
 Registration adds fn.system_prompt_layer.collab; existing transcripts retain
 their stored system prompt. Both humans and agents may edit code and specs.
 
-The project name is straps-exoskeleton. Lua names, commands, Nix identifiers,
-and help tags retain their existing names.
+The project name is straps-exoskeleton. Nix packages, the overlay attribute
+and the Nixvim module use straps-exoskeleton. The Lua module straps_collab,
+the commands and the straps-collab-* help tags keep their names.
 
 orgmode.nvim is optional. Buffers receive filetype org on load. Configure
 orgmode.nvim yourself; straps-exoskeleton does not configure agendas or execute
@@ -16,14 +21,17 @@ source blocks. The org template has no required headings or schema.
 
 COMMANDS                                            *straps-collab-commands*
 
+                                                              *:StrapsCollab*
 :StrapsCollab [name]
     Run from a straps session buffer. Register entries, create a new org file,
-    subscribe that session, and open the notebook in a split. Other buffers
-    are refused before file creation. A missing name uses a timestamp.
+    subscribe that session, and open the notebook in a split. In other buffers
+    it reports an error notification and creates no file. A missing name uses
+    a timestamp.
     Repeated names receive numeric suffixes; every start creates a new file.
     The command calls the Lua start function directly with the session
     context, so it does not pass through the tool guard chain.
 
+                                                          *:StrapsCollabOpen*
 :StrapsCollabOpen [name]
     Run from a straps session buffer. Reopen an existing notebook in the
     collaboration root, subscribe that session, and show the notebook,
@@ -42,21 +50,30 @@ COMMANDS                                            *straps-collab-commands*
 
 TOOLS                                                  *straps-collab-tools*
 
+                                                          *tool.collab_start*
 collab_start {name?, dir?}
     Create a unique file and subscribe the calling session. Open the notebook
     in a split without moving focus, and return path, created, bufnr, and the
-    live buffer content with line numbers.
-collab_open {name?, dir?}
-    Create or reopen a named file without subscribing. Existing content and
-    unsaved buffer edits are retained. Open it in a split when no window shows
-    it. Returns path, created, bufnr, and the live buffer content.
+    live buffer content with line numbers. Capability "edit".
+                                                           *tool.collab_open*
+collab_open {name, dir?}
+    name is required. Create or reopen the named file and subscribe the
+    calling session. Existing content and unsaved buffer edits are retained.
+    Open it in a split when no window shows it. Returns path, created, bufnr,
+    and the live buffer content. Capability "edit".
+
+One of bufnr or name is required by collab_read, collab_edit and
+collab_patch; without either they fail with "<tool>: pass bufnr or name".
+                                                           *tool.collab_read*
 collab_read {bufnr?, name?, dir?}
     Return the live buffer content with line numbers, including unsaved edits.
     Takes a notebook buffer number or a notebook name, never a filesystem path.
     Declared with capability "read". Like the built-in context tool, it has no
     path argument for a permission layer to resolve against the project root.
+                                                           *tool.collab_edit*
 collab_edit {bufnr?, name?, dir?, old_string, new_string, replace_all?}
     Replace exact text in the notebook buffer as one undo step, then save.
+                                                          *tool.collab_patch*
 collab_patch {bufnr?, name?, dir?, hunks}
     Apply 1-based inclusive line hunks to the notebook buffer as one undo
     step, then save. Hunks take start_line, end_line, new_text, and optional
@@ -66,14 +83,19 @@ collab_patch {bufnr?, name?, dir?, hunks}
     notify other subscribers of the save. When the calling session is
     subscribed and the write also saved changes it had not seen, the result
     carries their diff, numbered against the buffer before the edit.
-collab_subscribe {path}
-    Subscribe the calling session to saves of an existing regular file.
-    Repeated subscriptions return the existing group id and reset the diff
+                                                      *tool.collab_subscribe*
+collab_subscribe {bufnr?, name?, dir?, path?}
+    Subscribe the calling session to saves of an existing regular file,
+    identified by bufnr or name; path is kept for compatibility. Repeated
+    subscriptions keep the existing subscription and reset the diff
     baseline. Later notices diff against the buffer at subscribe time; call
-    collab_read after subscribing.
-collab_unsubscribe {path}
+    collab_read after subscribing. Capability "read".
+                                                    *tool.collab_unsubscribe*
+collab_unsubscribe {bufnr?, name?, dir?, path?}
     Remove that session's subscription and pending plugin notices. Does not
     load a file. Notices already delivered to straps cannot be withdrawn.
+    When nothing is removed, the result gives the reason. Capability "read".
+                                                           *tool.collab_list*
 collab_list {}
     List up to 500 regular org files in the root directory, sorted by name,
     and subscribers for loaded buffers. No directory creation or buffer loads.
@@ -110,19 +132,22 @@ the baseline and drops a save captured but not yet delivered. Writes with
 noautocmd (including straps file tools) emit no BufWritePost notice.
 
 Unloading or wiping either buffer removes the subscription. Subscribe again
-after reopening, with :StrapsCollabOpen or collab_subscribe. An idle
-subscriber receives the notice and a new run starts in that session; running
-agents receive steering. Saves do not grant execution permission: tool calls
-in the started run pass through the normal gate.
+after reopening, with :StrapsCollabOpen, collab_open or collab_subscribe. An
+idle subscriber receives the notice and a new run starts in that session;
+running agents receive steering. One INFO notification per save names the
+session buffers whose runs it started. Saves do not grant execution
+permission: tool calls in the started run pass through the normal gate.
 
 Notifications cover saves in this Neovim process only. Unsaved-edit and
 cross-process notification support remain deferred.
 
 PROMPT                                                 *straps-collab-prompt*
 
-fn.system_prompt_layer.collab asks agents to coordinate bounded subagent tasks,
+fn.system_prompt_layer.collab tells agents that collab_open subscribes them
+and asks agents to coordinate bounded subagent tasks,
 collect evidence and constraints, preserve human edits, use notice diffs as
 context and collab_read when they are not enough, and set expected_old_text
-or re-read before collab_patch. Neither party is restricted to code or specs.
+or re-read before collab_patch. It records ambiguity questions in the notebook
+and sends a choice between options of one kind to ask_user. Neither party is restricted to code or specs.
 The commands can register tools on invocation but cannot update stored prompts.
 Existing sessions keep the system prompt stored in their transcript.

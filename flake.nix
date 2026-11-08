@@ -3,7 +3,9 @@
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
 
-  outputs = { self, nixpkgs }:
+  inputs.straps = { url = "github:ducharmemp/straps"; flake = false; };
+
+  outputs = { self, nixpkgs, straps }:
     let
       systems = [ "x86_64-linux" "aarch64-linux" "x86_64-darwin" "aarch64-darwin" ];
       forAllSystems = f: nixpkgs.lib.genAttrs systems (system: f nixpkgs.legacyPackages.${system});
@@ -55,6 +57,7 @@
 
       devShells = forAllSystems (pkgs: {
         default = pkgs.mkShell {
+          STRAPS_ROOT = "${straps}";
           packages = [
             pkgs.neovim
             pkgs.luajitPackages.busted pkgs.luajitPackages.nlua
@@ -75,6 +78,7 @@
           dontBuild = true;
           doCheck = true;
           checkPhase = ''
+            export STRAPS_ROOT=${straps}
             export HOME=$TMPDIR
             export XDG_DATA_HOME=$TMPDIR/data XDG_STATE_HOME=$TMPDIR/state XDG_CACHE_HOME=$TMPDIR/cache
             fail=0

@@ -2,7 +2,7 @@
 
 straps-exoskeleton gives straps.nvim users and agents a shared org document for questions, code changes, constraints, and evidence. Both participants can edit the specification and the code; the template imposes no schema.
 
-The project name is straps-exoskeleton. Existing identifiers remain `straps-collab` for Nix packages and modules, `straps_collab` for Lua, and `:StrapsCollab` and `:StrapsCollabOpen` for the commands.
+The project name is straps-exoskeleton. Nix packages and modules use `straps-exoskeleton`; the Lua module remains `straps_collab` and the commands remain `:StrapsCollab` and `:StrapsCollabOpen`.
 
 ## Setup
 
@@ -10,10 +10,10 @@ Requires Neovim 0.11 or newer and straps.nvim. Install both plugins on your runt
 
 ```lua
 require('straps').setup()
-require('straps_collab').register()
+require('straps_collab').setup()
 ```
 
-Registration adds tools and `fn.system_prompt_layer.collab`. Existing transcripts keep their original system prompt. Start a new straps session to receive the prompt fragment. The commands also register entries when invoked, but cannot retrofit a stored system prompt.
+`setup(opts)` accepts an optional table, returns the module, and calls the existing `register()` entry. There are no options; unknown keys warn, and non-table arguments raise an error. Registration adds tools and `fn.system_prompt_layer.collab`. Existing transcripts keep their original system prompt. Start a new straps session to receive the prompt fragment. The commands also register entries when invoked, but cannot retrofit a stored system prompt.
 
 orgmode.nvim is optional. Every collaboration buffer receives filetype `org` when loaded. Configure orgmode.nvim yourself for its folding, TODO, agenda, and link features; this plugin does not override its configuration or execute source blocks.
 
@@ -25,9 +25,9 @@ From a straps session buffer, run:
 :StrapsCollab my-proposal
 ```
 
-The command creates a new file and opens it in a split, preserving the transcript window. The command calls the Lua start function with the session context directly, so it does not pass through the tool guard chain. Outside a straps session, it refuses before creating a file. Agents can call `collab_start` with a name or omit the name for a timestamped filename.
+The command creates a new file and opens it in a split, preserving the transcript window. The command calls the Lua start function with the session context directly, so it does not pass through the tool guard chain. Outside a straps session, it reports an error notification and creates no file. Agents can call `collab_start` with a name or omit the name for a timestamped filename.
 
-Files live in `stdpath('data')/straps/collab`, independent of the current repository. Every start creates a new file: repeated names and timestamp collisions receive numeric suffixes. `collab_open` reopens an existing named file without subscribing; follow it with `collab_subscribe` to receive save notices. A session can subscribe to several notebooks, and several sessions can subscribe to one notebook.
+Files live in `stdpath('data')/straps/collab`, independent of the current repository. Every start creates a new file: repeated names and timestamp collisions receive numeric suffixes. `collab_open` requires a name, creates or reopens that file, and subscribes the calling session to its saves. A session can subscribe to several notebooks, and several sessions can subscribe to one notebook.
 
 To reopen an existing notebook and subscribe the session you are in, run this from the session buffer:
 
@@ -42,26 +42,26 @@ Optional `dir` arguments must resolve within the global collaboration directory.
 
 ## Save notifications
 
-Subscriptions use buffer-local `BufWritePost` autocmds. They follow buffer renames, deduplicate repeated subscriptions, and coalesce saves queued before the scheduled callback runs. Each subscriber receives one `[straps]` notice through `fn.session_notify`, carrying a unified diff of the saved buffer against what that session last saw: its previous notice, its last `collab_read`, `collab_open`, or `collab_start`, its last `:StrapsCollabOpen`, its own collab write, or the buffer at subscribe time. The notice frames the diff as notebook data, not instructions. A diff over 20000 bytes is replaced by an instruction to call `collab_read`. A save with no changes since the session's last view sends no notice and starts no run. Running agents receive steering. An idle subscriber receives the notice and a new run starts in that session, so the agent reacts to the save; its tool calls still pass through the normal permission gate.
+Subscriptions use buffer-local `BufWritePost` autocmds. They follow buffer renames, deduplicate repeated subscriptions, and coalesce saves queued before the scheduled callback runs. Each subscriber receives one `[straps]` notice through `fn.session_notify`, carrying a unified diff of the saved buffer against what that session last saw: its previous notice, its last `collab_read`, `collab_open`, or `collab_start`, its last `:StrapsCollabOpen`, its own collab write, or the buffer at subscribe time. The notice frames the diff as notebook data, not instructions. A diff over 20000 bytes is replaced by an instruction to call `collab_read`. A save with no changes since the session's last view sends no notice and starts no run. Running agents receive steering. An idle subscriber receives the notice and a new run starts in that session, so the agent reacts to the save; its tool calls still pass through the normal permission gate. When a save starts runs, one `INFO` notification names the session buffers it started.
 
 A subscribed session's own `collab_edit` or `collab_patch` sends it no notice. If that write also saved changes the session had not seen, such as unsaved human edits, the tool result carries their diff, with line numbers of the buffer before the edit. Other subscribers receive a diff that includes the write. Writes made with `noautocmd`, including straps file tools, do not emit `BufWritePost` and therefore do not generate these notices.
 
-Unsubscribing cancels notices still queued in this plugin. Unloading or wiping either the notebook or the session removes that subscription. Notices already delivered to straps cannot be withdrawn. Reopening a notebook after unload requires subscribing again, with `:StrapsCollabOpen` or `collab_subscribe`.
+Unsubscribing cancels notices still queued in this plugin. Unloading or wiping either the notebook or the session removes that subscription. Notices already delivered to straps cannot be withdrawn. Reopening a notebook after unload requires subscribing again, with `:StrapsCollabOpen`, `collab_open`, or `collab_subscribe`.
 
 Subscriptions last for this Neovim process. Cross-process notifications and notifications for unsaved edits are deferred. Notebook edits neither authorize commands nor change permission grants.
 
 ## Tools
 
 - `collab_start {name?, dir?}` creates a unique file, subscribes the calling session, opens the notebook in a split without moving focus, and returns the live buffer content with line numbers.
-- `collab_open {name?, dir?}` creates or reopens a named file without a subscription, opens it in a split when no window shows it, and returns the live buffer content.
+- `collab_open {name, dir?}` creates or reopens the named file, subscribes the calling session, opens it in a split when no window shows it, and returns the live buffer content. `name` is required.
 - `collab_read {bufnr?, name?, dir?}` returns the notebook's live buffer content with line numbers, including unsaved edits. It takes a buffer number or notebook name, never a filesystem path, and declares capability `read` in `fn.capability`. Like the built-in `context` tool, it has no `path` argument for a permission layer to resolve against the project root.
 - `collab_edit {bufnr?, name?, dir?, old_string, new_string, replace_all?}` replaces exact text in the notebook buffer as one undo step and saves it.
 - `collab_patch {bufnr?, name?, dir?, hunks}` applies 1-based inclusive line hunks (`start_line`, `end_line`, `new_text`, optional `expected_old_text`) to the notebook buffer as one undo step and saves it.
-
-Both edit tools declare capability `edit`, take no `path` argument, run the straps disk-change and concurrent-writer checks, stamp the session as the writer, return a diff of unseen changes their write saved when the calling session is subscribed, and notify other subscribers of the save. Agents must not use `read_file`, `edit_file`, `patch_file`, or `write_file` on notebooks.
-- `collab_subscribe {path}` subscribes the calling session to an existing regular file under the collaboration root. Later notices diff against the buffer at subscribe time, so call `collab_read` after subscribing.
-- `collab_unsubscribe {path}` removes that session's subscription without loading a file.
+- `collab_subscribe {bufnr?, name?, dir?, path?}` subscribes the calling session to an existing regular file under the collaboration root. `path` remains for compatibility. Later notices diff against the buffer at subscribe time, so call `collab_read` after subscribing.
+- `collab_unsubscribe {bufnr?, name?, dir?, path?}` removes that session's subscription without loading a file. When it removes nothing, the result gives the reason.
 - `collab_list {}` lists up to 500 regular org files in the root directory, sorted by name, and subscriptions for loaded buffers. It does not create directories or load files; nested directories are not enumerated.
+
+`collab_read`, `collab_edit`, and `collab_patch` each require one of `bufnr` or `name`. Both edit tools declare capability `edit`, take no `path` argument, run the straps disk-change and concurrent-writer checks, stamp the session as the writer, return a diff of unseen changes their write saved when the calling session is subscribed, and notify other subscribers of the save. Agents must not use `read_file`, `edit_file`, `patch_file`, or `write_file` on notebooks. `collab_open` and `collab_start` declare capability `edit`; `collab_subscribe`, `collab_unsubscribe`, `collab_read`, and `collab_list` declare `read`.
 
 `hook.collab_on_write` produces notices under the subscriber's registry scope. It receives `{ buf, file, match, diff }` and returns the notice text; an empty `diff` returns no notice. Hook failures produce an editor error notification, restore the previous scope, and keep the session's baseline, so the next notice includes the missed change.
 
@@ -77,11 +77,11 @@ done
 exit "$fail"
 ```
 
-`nix flake check path:.` runs the packaged checks against the working directory. Unit tests execute the registered Lua source strings with a test registry and real Neovim buffers and autocmds. The integration spec requires a separate straps checkout: run `STRAPS_TEST_RTP=/path/to/straps busted tests/integration_spec.lua`. Without that variable it reports a pending test; the flake check does not fetch straps or run that integration case.
+`nix flake check path:.` runs the packaged checks against the working directory, including integration against its public Straps input. Unit tests execute the registered Lua source strings with a test registry and real Neovim buffers and autocmds. Run `STRAPS_ROOT=/path/to/straps busted tests/integration_spec.lua` for a local core checkout. The former `STRAPS_TEST_RTP` variable remains a compatibility fallback; without either variable the integration spec reports a pending test. The development shell sets `STRAPS_ROOT` to its Straps input.
 
 ## Nix installation
 
-`nix build --no-link path:.` builds the Vim plugin package. The flake exports `packages.<system>.default`, `packages.<system>.straps-collab`, and `overlays.default` with `vimPlugins.straps-collab`.
+`nix build --no-link path:.` builds the Vim plugin package. The flake exports `packages.<system>.default`, `packages.<system>.straps-exoskeleton`, and `overlays.default` with `vimPlugins.straps-exoskeleton`.
 
 For Nixvim, import both plugins' modules and enable them:
 
@@ -92,11 +92,11 @@ For Nixvim, import both plugins' modules and enable them:
     inputs.straps-exoskeleton.nixvimModules.default
   ];
   plugins.straps.enable = true;
-  plugins."straps-collab".enable = true;
+  plugins."straps-exoskeleton".enable = true;
 }
 ```
 
-Use your own flake input names in place of `straps` and `straps-exoskeleton`. This flake exports `nixvimModules.default` and `nixvimModules."straps-collab"` as aliases. The module installs the plugin and appends its registration after straps' normal setup snippet with `lib.mkAfter`. Override `plugins."straps-collab".package` to use another build. There is no settings option because `register()` takes no configuration.
+Use your own flake input names in place of `straps` and `straps-exoskeleton`. This flake exports `nixvimModules.default` and `nixvimModules."straps-exoskeleton"` as aliases. The module installs the plugin and appends its registration after straps' normal setup snippet with `lib.mkAfter`. Override `plugins."straps-exoskeleton".package` to use another build. There is no settings option because `register()` takes no configuration.
 
 The module does not enable or configure straps.nvim or orgmode.nvim. Enable straps as shown above; orgmode.nvim remains optional. With this module, omit the manual `require('straps_collab').register()` from the setup instructions.
 

@@ -11,7 +11,7 @@ local function drain()
   assert(vim.wait(1000, function() return done end))
 end
 
-local reg, tmp, original_stdpath, initial_buffers, original_notify, errors, original_ui
+local reg, tmp, original_stdpath, initial_buffers, original_notify, errors, levels, original_ui
 local function registry()
   local r = { entries = {}, scope = nil, notices = {} }
   function r.define_default(spec)
@@ -36,7 +36,7 @@ local function target()
 end
 local function call(name, input, ctx) return reg.call('tool.collab_' .. name, input or {}, ctx) end
 local function opened(name, ctx)
-  local out = call(ctx and 'start' or 'open', { name = name or 'example' }, ctx)
+  local out = call(ctx and 'start' or 'open', { name = name or 'example' }, ctx or target())
   return out:match('path: ([^\n]+)'), tonumber(out:match('bufnr: (%d+)'))
 end
 local function save(buf)
@@ -46,6 +46,9 @@ local function fails(fn, text)
   local ok, err = pcall(fn)
   check(not ok and (not text or tostring(err):find(text, 1, true) ~= nil))
 end
+local function notified(text)
+  check(errors[#errors] ~= nil and errors[#errors]:find(text, 1, true) ~= nil)
+end
 
 before_each(function()
   tmp = vim.fn.tempname()
@@ -53,8 +56,8 @@ before_each(function()
   original_stdpath = vim.fn.stdpath
   vim.fn.stdpath = function(kind) return kind == 'data' and tmp or original_stdpath(kind) end
   original_notify = vim.notify
-  errors = {}
-  vim.notify = function(text) errors[#errors + 1] = text end
+  errors, levels = {}, {}
+  vim.notify = function(text, level) errors[#errors + 1] = text; levels[#errors] = level end
   original_ui = package.loaded['straps.ui']
   initial_buffers = {}
   for _, b in ipairs(vim.api.nvim_list_bufs()) do initial_buffers[b] = true end
@@ -80,6 +83,7 @@ describe('collaboration behavior', function()
     require('straps_collab').register()
     check(reg.get('tool.collab_start') == entry)
     check(reg.call('fn.system_prompt_layer.collab'):find('Both the human and agents', 1, true) ~= nil)
+    check(reg.call('fn.system_prompt_layer.collab'):find('call ask_user with those options', 1, true) ~= nil)
   end)
 
   it('creates unique files for repeated names and default timestamps', function()
@@ -132,24 +136,26 @@ describe('collaboration behavior', function()
   end)
 
   it('confines directories and rejects leaf and intermediate symlinks', function()
-    fails(function() call('open', { dir = tmp .. '/elsewhere' }) end, 'dir must be under')
+    fails(function() call('open', { dir = tmp .. '/elsewhere', name = 'x' }, target()) end, 'dir must be under')
     local path = opened('real')
     local dir = tmp .. '/straps/collab'
     assert(vim.uv.fs_symlink(path, dir .. '/link.org'))
     fails(function() opened('link') end, 'regular file')
     assert(vim.uv.fs_symlink(tmp, dir .. '/escape'))
-    fails(function() call('open', { dir = dir .. '/escape', name = 'bad' }) end, 'symlink')
-    fails(function() call('open', { dir = dir .. '/../outside' }) end, 'dir must be under')
-    local nested = call('open', { dir = dir .. '/nested', name = 'safe' })
+    fails(function() call('open', { dir = dir .. '/escape', name = 'bad' }, target()) end, 'symlink')
+    fails(function() call('open', { dir = dir .. '/../outside', name = 'x' }, target()) end, 'dir must be under')
+    local nested = call('open', { dir = dir .. '/nested', name = 'safe' }, target())
     check(nested:find('/nested/safe.org', 1, true) ~= nil)
   end)
 
   it('deduplicates subscriptions, scopes delivery, coalesces saves and follows renames', function()
     local ctx = target()
     local path, buf = opened('watch', ctx)
-    local id = call('subscribe', { path = path }, ctx)
+    local id = vim.b[buf].straps_collab_watch[tostring(ctx.bufnr)]
+    check(call('subscribe', { path = path }, ctx) == 'subscribed')
     vim.api.nvim_buf_set_lines(buf, 0, 0, false, { 'seen at resubscribe' })
-    check(id == call('subscribe', { path = path }, ctx))
+    call('subscribe', { bufnr = buf }, ctx)
+    check(id == vim.b[buf].straps_collab_watch[tostring(ctx.bufnr)])
     reg.scope = 777
     vim.api.nvim_buf_set_lines(buf, 0, 0, false, { 'first' })
     save(buf)
@@ -286,7 +292,7 @@ describe('collaboration behavior', function()
     check(require('straps_collab.collab')._subs[buf] == nil)
     check(vim.b[buf].straps_collab_watch[tostring(ctx.bufnr)] == nil)
     check(not pcall(vim.api.nvim_get_autocmds, { group = group }))
-    check(call('unsubscribe', { path = path }, ctx) == 'removed: false')
+    check(call('unsubscribe', { path = path }, ctx) == 'removed: false (this session is not subscribed to the notebook)')
   end)
 
   for _, which in ipairs({ 'session', 'notebook' }) do
@@ -345,7 +351,7 @@ describe('collaboration behavior', function()
     check(vim.fn.winlayout()[1] == 'row')
     check(vim.api.nvim_get_current_win() == current)
     check(out:find('     1\t#+TITLE: shown', 1, true) ~= nil)
-    call('open', { name = 'shown' })
+    call('open', { name = 'shown' }, target())
     check(#vim.api.nvim_list_wins() == wins + 1)
   end)
 
@@ -433,7 +439,9 @@ describe('collaboration behavior', function()
   it('registers command with explicit context, opens a split, rejects other buffers', function()
     dofile('plugin/straps_collab.lua')
     reg.entries['tool.collab_start'].fn = function() error('no ctx to await on') end
-    fails(function() vim.cmd('StrapsCollab refuse') end, 'session buffer')
+    vim.cmd('StrapsCollab refuse')
+    notified('straps_collab: run this command from a straps session buffer')
+    check(levels[#errors] == vim.log.levels.ERROR)
     check(vim.uv.fs_stat(tmp .. '/straps/collab') == nil)
     local ctx = target()
     vim.api.nvim_set_current_buf(ctx.bufnr)
@@ -497,13 +505,16 @@ describe('collaboration behavior', function()
       local _, buf = notebook('outside')
       local ctx = target()
       vim.api.nvim_set_current_buf(vim.api.nvim_create_buf(false, true))
-      fails(function() vim.cmd('StrapsCollabOpen outside') end, 'session buffer')
+      vim.cmd('StrapsCollabOpen outside')
+      notified('straps_collab: run this command from a straps session buffer')
       check(watch(buf, ctx) == nil and next(vim.b[buf].straps_collab_watch or {}) == nil)
     end)
 
     it('reports a missing notebook without creating the root', function()
       in_session()
-      fails(function() vim.cmd('StrapsCollabOpen missing') end, 'no notebook')
+      vim.cmd('StrapsCollabOpen missing')
+      notified('straps_collab: no notebook')
+      check(levels[#errors] == vim.log.levels.ERROR)
       check(vim.uv.fs_stat(tmp .. '/straps/collab') == nil)
       check(reg.scope == nil)
     end)
@@ -610,14 +621,16 @@ describe('collaboration behavior', function()
       local path = notebook('deleted')
       vim.uv.fs_unlink(path)
       in_session()
-      fails(function() vim.cmd('StrapsCollabOpen deleted') end, 'no file on disk')
+      vim.cmd('StrapsCollabOpen deleted')
+      notified('no file on disk')
     end)
 
     it('matches loaded buffers by exact name', function()
       vim.fn.mkdir(tmp .. '/straps/collab', 'p')
       vim.fn.bufload(vim.fn.bufadd(tmp .. '/straps/collab/x.org.bak'))
       in_session()
-      fails(function() vim.cmd('StrapsCollabOpen x') end, 'no notebook')
+      vim.cmd('StrapsCollabOpen x')
+      notified('no notebook')
     end)
 
     it('completes resumable notebook names by prefix without creating the root', function()
@@ -727,6 +740,126 @@ describe('collaboration behavior', function()
       drain()
       check(errors[#errors] and errors[#errors]:find('is gone', 1, true) ~= nil)
       check(next(vim.b[buf].straps_collab_watch or {}) == nil)
+    end)
+  end)
+
+  describe('tool contract', function()
+    it('declares grantable capabilities for every tool', function()
+      check(reg.get('tool.collab_open').capability == 'edit')
+      check(reg.get('tool.collab_start').capability == 'edit')
+      check(reg.get('tool.collab_subscribe').capability == 'read')
+      check(reg.get('tool.collab_unsubscribe').capability == 'read')
+    end)
+
+    it('names the tool and the missing bufnr-or-name argument', function()
+      local ctx = target()
+      fails(function() call('read', {}, ctx) end, 'collab_read: pass bufnr or name')
+      fails(function() call('edit', { old_string = 'a', new_string = 'b' }, ctx) end, 'collab_edit: pass bufnr or name')
+      fails(function() call('patch', { hunks = { { start_line = 1, end_line = 1, new_text = 'x' } } }, ctx) end, 'collab_patch: pass bufnr or name')
+      for _, name in ipairs({ 'read', 'edit', 'patch' }) do
+        local schema = reg.get('tool.collab_' .. name).input_schema
+        check(schema.anyOf == nil)
+        check(vim.startswith(schema.properties.bufnr.description, 'One of bufnr or name is required.'))
+        check(vim.startswith(schema.properties.name.description, 'One of bufnr or name is required.'))
+      end
+    end)
+
+    it('subscribes and unsubscribes by bufnr or name and keeps path', function()
+      local ctx, other = target(), target()
+      local path, buf = opened('addressed', ctx)
+      check(call('subscribe', { name = 'addressed' }, other) == 'subscribed')
+      check(vim.b[buf].straps_collab_watch[tostring(other.bufnr)] ~= nil)
+      check(call('unsubscribe', { bufnr = buf }, other) == 'removed: true')
+      check(call('subscribe', { bufnr = buf }, other) == 'subscribed')
+      check(call('unsubscribe', { name = 'addressed' }, other) == 'removed: true')
+      check(call('unsubscribe', { path = path }, ctx) == 'removed: true')
+      fails(function() call('subscribe', {}, ctx) end, 'collab_subscribe: pass bufnr, name or path')
+      for _, name in ipairs({ 'subscribe', 'unsubscribe' }) do
+        local entry = reg.get('tool.collab_' .. name)
+        check(entry.doc:find('bufnr or name', 1, true) ~= nil)
+        check(entry.input_schema.required == nil and entry.input_schema.properties.path ~= nil)
+      end
+    end)
+
+    it('reports why unsubscribe removed nothing', function()
+      local ctx = target()
+      local path, buf = opened('reasons')
+      vim.api.nvim_buf_delete(buf, { force = true })
+      check(call('unsubscribe', { path = path }, ctx) == 'removed: false (the notebook buffer is not loaded)')
+    end)
+
+    it('requires a name for collab_open and creates no timestamp file', function()
+      fails(function() call('open', {}, target()) end, 'collab_open: name is required')
+      check(vim.uv.fs_stat(tmp .. '/straps/collab') == nil)
+      check(vim.deep_equal(reg.get('tool.collab_open').input_schema.required, { 'name' }))
+    end)
+
+    it('subscribes the session that calls collab_open', function()
+      local ctx = target()
+      local _, buf = opened('reopened')
+      call('open', { name = 'reopened' }, ctx)
+      check(vim.b[buf].straps_collab_watch[tostring(ctx.bufnr)] ~= nil)
+      vim.api.nvim_buf_set_lines(buf, 0, 0, false, { 'after open' })
+      save(buf)
+      drain()
+      local hit = false
+      for _, n in ipairs(reg.notices) do if n.target == ctx.bufnr and n.text:find('+after open', 1, true) then hit = true end end
+      check(hit)
+      check(reg.call('fn.system_prompt_layer.collab'):find('it subscribes you', 1, true) ~= nil)
+    end)
+
+    it('exposes no augroup ids in results', function()
+      local ctx = target()
+      check(call('start', { name = 'ids' }, ctx):find('autocmd', 1, true) == nil)
+      check(call('open', { name = 'ids' }, ctx):find('autocmd', 1, true) == nil)
+      check(call('subscribe', { name = 'ids' }, target()):find('autocmd', 1, true) == nil)
+    end)
+
+    it('sorts the whole directory before capping the list', function()
+      local dir = tmp .. '/straps/collab'
+      vim.fn.mkdir(dir, 'p')
+      for i = 502, 1, -1 do vim.fn.writefile({}, ('%s/n%04d.org'):format(dir, i)) end
+      local lines = vim.split(call('list'), '\n')
+      check(lines[2] == '- n0001.org' and lines[501] == '- n0500.org')
+      check(lines[502] == '(listing capped at 500 of 502 files)')
+    end)
+
+    it('reports woken idle sessions in one INFO notification', function()
+      local started = {}
+      package.loaded['straps.loop'] = { running = function() return false end, start = function(b) started[#started + 1] = b end }
+      local a, b = target(), target()
+      local _, buf = opened('woken', a)
+      call('subscribe', { bufnr = buf }, b)
+      reg.entries['fn.session_notify'].fn = function() return 'append' end
+      local before = #errors
+      vim.api.nvim_buf_set_lines(buf, 0, 0, false, { 'wake both' })
+      save(buf)
+      drain()
+      drain()
+      package.loaded['straps.loop'] = nil
+      check(#started == 2)
+      check(#errors == before + 1 and levels[#errors] == vim.log.levels.INFO)
+      check(errors[#errors]:find('straps_collab: ', 1, true) == 1)
+      check(errors[#errors]:find(tostring(a.bufnr), 1, true) ~= nil and errors[#errors]:find(tostring(b.bufnr), 1, true) ~= nil)
+    end)
+
+    it('setup forwards to register and returns the module', function()
+      local plugin = require('straps_collab')
+      check(plugin.setup({}) == plugin)
+    end)
+
+    it('guards plugin reloads and describes both commands', function()
+      vim.g.loaded_straps_collab = nil
+      dofile('plugin/straps_collab.lua')
+      local commands = vim.api.nvim_get_commands({})
+      check(commands.StrapsCollab.definition ~= '' and commands.StrapsCollabOpen.definition ~= '')
+      check(vim.g.loaded_straps_collab == true)
+      vim.api.nvim_del_user_command('StrapsCollab')
+      dofile('plugin/straps_collab.lua')
+      check(vim.api.nvim_get_commands({}).StrapsCollab == nil)
+      vim.g.loaded_straps_collab = nil
+      dofile('plugin/straps_collab.lua')
+      check(vim.api.nvim_get_commands({}).StrapsCollab ~= nil)
     end)
   end)
 end)
