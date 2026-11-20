@@ -19,10 +19,20 @@
           license = nixpkgs.lib.licenses.mit;
         };
       };
+
+      strapsFlake = (import "${straps}/flake.nix").outputs { self = straps // strapsFlake; inherit nixpkgs; };
+
+      mkTrynix = pkgs: pkgs.wrapNeovimUnstable pkgs.neovim-unwrapped {
+        plugins = [ strapsFlake.packages.${pkgs.stdenv.hostPlatform.system}.default (mkPlugin pkgs) ];
+        waylandSupport = false;
+        luaRcContent = ''require("straps").setup({}) require("straps_collab").register()'';
+        wrapperArgs = [ "--prefix" "PATH" ":" (nixpkgs.lib.makeBinPath [ pkgs.curl pkgs.ripgrep ]) ];
+      };
     in
     {
       packages = forAllSystems (pkgs: rec {
         straps-exoskeleton = mkPlugin pkgs;
+        trynix = mkTrynix pkgs;
         default = straps-exoskeleton;
       });
 
